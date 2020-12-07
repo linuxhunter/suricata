@@ -1389,6 +1389,39 @@
     fi
     LIBS="${TMPLIBS}"
 
+  # dpdk support
+	# DPDK support is checked by `--enable_dpdk`
+	AC_ARG_ENABLE(dpdk,
+				AS_HELP_STRING([--enable-dpdk], [Enable DPDK support [default=no]]),
+				,[enable_dpdk=no])
+	AS_IF([test "x$enable_dpdk" = "xyes"], [
+		   enable_af_packet="no"
+
+		   AC_DEFINE([HAVE_DPDK],[1],(DPDK support enabled))
+
+		   if test -f /usr/local/include/rte_eal.h; then
+			   DPDK_CFLAGS=" -DHAVE_DPDK -DALLOW_EXPERIMENTAL_API $(pkg-config --cflags libdpdk) "
+			   AC_SUBST(DPDK_CFLAGS)
+			   echo " Added configuration for DPDK CFLAGS"
+
+			   DPDK_LDFLAGS=" -D_GNU_SOURCE -pthread -Wl,--no-as-needed -Wl,-export-dynamic -Wl,-lrt -Wl,-lm -Wl,-lnuma -Wl,-ldl -Wl,-export-dynamic -Wl,--as-needed $(pkg-config --libs libdpdk) "
+			    DPDK_LDFLAGS="-I$RTE_SDK/lib/librte_eal/linux/eal/include \
+					-DRTE_USE_FUNCTION_VERSIONING \
+					$(pkg-config --cflags libdpdk) \
+					-D_GNU_SOURCE  -W -Wall  -DALLOW_EXPERIMENTAL_API  \
+					$(pkg-config --libs libdpdk) \
+					-lpcap -Wl,-lrte_bus_vmbus -Wl,-lcrypto -Wl,\
+					-lrt -Wl,-lm -Wl,-lnuma -Wl,-ldl -Wl,-export-dynamic -Wl,\
+					-export-dynamic "
+				echo " Added configuration for DPDK LDFLAGS"
+				AC_SUBST(DPDK_LDFLAGS)
+			fi
+
+			echo " Added configuration for DPDK"
+			echo ""
+		])
+	    AM_CONDITIONAL([BUILD_DPDK], [test "x$enable_dpdk" = "xyes"])
+
     #Appears as if pcap_set_buffer_size is linux only?
     LIBPCAPSBUFF=""
     #To prevent duping the lib link we reset LIBS after this check. Setting action-if-found to NULL doesn't seem to work
@@ -2792,6 +2825,7 @@ AC_CONFIG_FILES(ebpf/Makefile)
 AC_OUTPUT
 
 SURICATA_BUILD_CONF="Suricata Configuration:
+  DPDK support:                            ${enable_dpdk}
   AF_PACKET support:                       ${enable_af_packet}
   eBPF support:                            ${enable_ebpf}
   XDP support:                             ${have_xdp}

@@ -228,6 +228,7 @@ void RunModeRegisterRunModes(void)
     RunModeIdsNflogRegister();
     RunModeUnixSocketRegister();
     RunModeIpsWinDivertRegister();
+	RunModeDpdkRegister();
 #ifdef UNITTESTS
     UtRunModeRegister();
 #endif
@@ -345,6 +346,9 @@ void RunModeDispatch(int runmode, const char *custom_mode,
             case RUNMODE_NFLOG:
                 custom_mode = RunModeIdsNflogGetDefaultMode();
                 break;
+			case RUNMODE_DPDK:
+				custom_mode = RunModeDpdkGetDefaultMode();
+				break;
 #ifdef WINDIVERT
             case RUNMODE_WINDIVERT:
                 custom_mode = RunModeIpsWinDivertGetDefaultMode();

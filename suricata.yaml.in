@@ -1852,6 +1852,27 @@ napatech:
     #
     hashmode: hash5tuplesorted
 
+
+# DPDK configuration. for use on DPDK instance
+dpdk:
+
+    tx-fragment: no
+    rx-reassemble: no
+    # BYPASS, IDS, IPS
+    mode: IDS
+    # port index
+    input-output-map: ["0-1", "1-0", "2-3", "3-2"]
+    # EAL args
+    eal-args: ["--log-level=eal,1", "-l 1", "--file-prefix=suricata-dpdk", "-m 2048"]
+    # mempool
+    mempool-port-common: [name=suricata-port,n=24000,elt_size=2000,private_data_size=0]
+    mempool-reas-common: [name=suricatareassembly,n=8000,elt_size=10000,private_data_size=0]
+    # port config
+    port-config-0: [mempool=portpool,queues=4,rss-tuple=3,ebpf=NULL,jumbo=no,mtu=1500,tx-mode=0]
+    port-config-1: [mempool=portpool,queues=4,rss-tuple=3,ebpf=NULL,jumbo=no,mtu=1500,tx-mode=0]
+    port-config-2: [mempool=portpool,queues=4,rss-tuple=3,ebpf=NULL,jumbo=no,mtu=1500,tx-mode=0]
+    port-config-3: [mempool=portpool,queues=4,rss-tuple=3,ebpf=NULL,jumbo=no,mtu=1500,tx-mode=0]
+
 ##
 ## Configure Suricata to load Suricata-Update managed rules.
 ##
