@@ -72,6 +72,9 @@ enum PktSrcEnum {
 #ifdef HAVE_PF_RING_FLOW_OFFLOAD
 #include "source-pfring.h"
 #endif
+#ifdef HAVE_DPDK
+#include "source-dpdk.h"
+#endif
 
 #include "action-globals.h"
 
@@ -469,6 +472,9 @@ typedef struct Packet_
 #endif /* IPFW */
 #ifdef AF_PACKET
         AFPPacketVars afp_v;
+#endif
+#ifdef HAVE_DPDK
+		DpdkPacketVars dpdk_v;
 #endif
 #ifdef HAVE_NETMAP
         NetmapPacketVars netmap_v;

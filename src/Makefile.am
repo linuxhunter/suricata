@@ -409,6 +409,7 @@ reputation.c reputation.h \
 respond-reject.c respond-reject.h \
 respond-reject-libnet11.h respond-reject-libnet11.c \
 runmode-af-packet.c runmode-af-packet.h \
+runmode-dpdk.c runmode-dpdk.h \
 runmode-erf-dag.c runmode-erf-dag.h \
 runmode-erf-file.c runmode-erf-file.h \
 runmode-ipfw.c runmode-ipfw.h \
@@ -439,6 +440,7 @@ source-pcap-file-directory-helper.c source-pcap-file-directory-helper.h \
 source-pcap-file-helper.c source-pcap-file-helper.h \
 source-pfring.c source-pfring.h \
 source-windivert.c source-windivert.h \
+source-dpdk.c source-dpdk.h \
 stream.c stream.h \
 stream-tcp.c stream-tcp.h stream-tcp-private.h \
 stream-tcp-inline.c stream-tcp-inline.h \
@@ -586,7 +588,7 @@ AM_CPPFLAGS = $(all_includes)
 suricata_SOURCES = main.c $(COMMON_SOURCES)
 
 # the library search path.
-suricata_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
+suricata_LDFLAGS = $(all_libraries) ${SECLDFLAGS} ${DPDK_LDFLAGS}
 suricata_LDADD = $(HTP_LDADD) $(RUST_LDADD)
 suricata_DEPENDENCIES = $(RUST_SURICATA_LIB)
 
@@ -671,7 +673,7 @@ endif
 
 # default CFLAGS
 AM_CFLAGS = ${OPTIMIZATION_CFLAGS} ${GCC_CFLAGS} ${CLANG_CFLAGS}            \
-    ${SECCFLAGS} ${PCAP_CFLAGS} -DLOCAL_STATE_DIR=\"$(localstatedir)\"      \
+    ${SECCFLAGS} ${PCAP_CFLAGS} ${DPDK_CFLAGS} -DLOCAL_STATE_DIR=\"$(localstatedir)\"      \
     -Wall -Wno-unused-parameter -Wmissing-prototypes -Wmissing-declarations \
     -Wstrict-prototypes -Wwrite-strings -Wbad-function-cast                 \
     -Wformat-security -Wno-format-nonliteral -Wmissing-format-attribute     \

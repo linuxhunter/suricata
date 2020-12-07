@@ -228,6 +228,7 @@ void RunModeRegisterRunModes(void)
     RunModeIdsNflogRegister();
     RunModeUnixSocketRegister();
     RunModeIpsWinDivertRegister();
+	RunModeDpdkRegister();
 #ifdef UNITTESTS
     UtRunModeRegister();
 #endif
