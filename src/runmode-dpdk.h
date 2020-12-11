@@ -57,6 +57,7 @@ typedef struct __attribute__((__packed__))
 
 typedef struct __attribute__((__packed__))
 {
+	uint16_t pre_acl:1;
 	uint16_t tx_fragment:1;
 	uint16_t rx_reassemble:1;
 	uint16_t mode:2;
@@ -72,5 +73,5 @@ int ParseDpdkYaml(void);
 int CreateDpdkReassemblyFragement(void);
 int ValidateDpdkConfig(void);
 uint8_t GetRunMode(void);
-
+uint8_t GetPreAcl(void);
 #endif  /* __RUNMODE_DPDK_H__ */

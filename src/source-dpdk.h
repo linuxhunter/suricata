@@ -90,7 +90,6 @@ typedef struct DpdkPacketVars_s
 	struct rte_eth_dev_tx_buffer *buffer;
 } DpdkPacketVars;
 
-
 void TmModuleReceiveDpdkRegister(void);
 void TmModuleDecodeDpdkRegister(void);
 #endif /* __SOURCE_DPDKINTEL_H__ */

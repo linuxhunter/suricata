@@ -178,6 +178,7 @@
 
 #ifdef HAVE_DPDK
 #include "source-dpdk.h"
+#include "acl-dpdk.h"
 #endif
 
 extern uint16_t argument_count;
@@ -2861,6 +2862,10 @@ int SuricataMain(int argc, char **argv)
 
 #ifdef HAVE_DPDK
 	if (suricata.run_mode == RUNMODE_DPDK) {
+		if (CreateDpdkAcl()) {
+			SCLogError(SC_ERR_DPDK_CONFIG, " Failed to create ACL for DPDK!");
+			exit(EXIT_FAILURE);
+		}
 		SCLogDebug(" Check for reassembly-fragemnt offlaod for DPDK.");
 		if (CreateDpdkReassemblyFragement()) {
 			SCLogError(SC_ERR_DPDK_CONFIG, " Failed to create ReassemblyFragement DPDK!");

@@ -549,11 +549,14 @@ int ParseDpdkYaml(void)
 	}
 
 	dpdk_config.mode = dpdk_config.mode;
+	dpdk_config.pre_acl = 0;
 	dpdk_config.rx_reassemble = 0;
 	dpdk_config.tx_fragment = 0;
 
 	int boolvalue = 0;
 
+	if (ConfGetChildValueBool(node, "pre-acl", &boolvalue) == 1)
+		dpdk_config.pre_acl = boolvalue;
 	if (ConfGetChildValueBool(node, "rx-reassemble", &boolvalue) == 1)
 		dpdk_config.rx_reassemble = boolvalue;
 	if (ConfGetChildValueBool(node, "tx-fragment", &boolvalue) == 1)
@@ -901,6 +904,16 @@ uint8_t GetRunMode(void)
 	return dpdk_config.mode;
 #else
 	return 0; /*BYPASS*/
+#endif
+}
+
+uint8_t GetPreAcl(void)
+{
+	SCEnter();
+#ifdef HAVE_DPDK
+	return dpdk_config.pre_acl;
+#else
+	return 0;
 #endif
 }
 

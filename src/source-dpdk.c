@@ -47,8 +47,10 @@
 #ifdef HAVE_DPDK
 
 #include "source-dpdk.h"
+#include "acl-dpdk.h"
 #include <rte_mbuf.h>
 #include <rte_ethdev.h>
+
 /** storage for mpipe device names */
 typedef struct DpdkDevice_ {
     char *dev;  /**< the device (e.g. "xgbe1") */
@@ -296,33 +298,73 @@ TmEcode ReceiveDpdkLoop(ThreadVars *tv, void *data, void *slot)
 		if (likely(ptv->mode != 0)) {
 			if (likely(nb_rx)) {
 
+				struct acl_search_t acl_search;
 				int i, ret;
-				for (i = 0; i < 4 && i < nb_rx; i++) {
-					rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
-				}
 
-				for (i = 0; i < (nb_rx - 4); i++) {
-					rte_prefetch0(rte_pktmbuf_mtod(bufs[i + 2], void *));
-					p = DpdkProcessPacket(ptv, bufs[i]);
-
-					ret = TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p);
-					if (unlikely(ret != TM_ECODE_OK)) {
-						ptv->failtx += (uint64_t)1;
-						TmqhOutputPacketpool(ptv->tv, p);
-						SCLogNotice(" failed TmThreadsSlotProcessPkt");
-						SCReturnInt(TM_ECODE_FAILED);
+				ret = DpdkAclClassify(bufs, &acl_search, nb_rx);
+				if (ret) {
+					for (i = 0; i < 4 && i < acl_search.num_ipv4; i++) {
+						rte_prefetch0(rte_pktmbuf_mtod(acl_search.m_ipv4[i], void *));
 					}
-				}
+					for (i = 0; i < (acl_search.num_ipv4 - 4); i++) {
+						rte_prefetch0(rte_pktmbuf_mtod(acl_search.m_ipv4[i + 2], void *));
+						if (likely(acl_search.res_ipv4[i] & ACL_DENY_SIGNATURE) == 0) {
+							p = DpdkProcessPacket(ptv, acl_search.m_ipv4[i]);
 
-				for (; i < nb_rx; i++) {
-					p = DpdkProcessPacket(ptv, bufs[i]);
+							ret = TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p);
+							if (unlikely(ret != TM_ECODE_OK)) {
+								ptv->failtx += (uint64_t)1;
+								TmqhOutputPacketpool(ptv->tv, p);
+								SCLogNotice(" failed TmThreadsSlotProcessPkt");
+								SCReturnInt(TM_ECODE_FAILED);
+							}
+						} else {
+							rte_pktmbuf_free(acl_search.m_ipv4[i]);
+						}
+					}
+					for (; i < acl_search.num_ipv4; i++) {
+						if (likely(acl_search.res_ipv4[i] & ACL_DENY_SIGNATURE) == 0) {
+							p = DpdkProcessPacket(ptv, bufs[i]);
 
-					ret = TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p);
-					if (unlikely(ret != TM_ECODE_OK)) {
-						ptv->failtx += (uint64_t)1;
-						TmqhOutputPacketpool(ptv->tv, p);
-						SCLogNotice(" failed TmThreadsSlotProcessPkt");
-						SCReturnInt(TM_ECODE_FAILED);
+							ret = TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p);
+							if (unlikely(ret != TM_ECODE_OK)) {
+								ptv->failtx += (uint64_t)1;
+								TmqhOutputPacketpool(ptv->tv, p);
+								SCLogNotice(" failed TmThreadsSlotProcessPkt");
+								SCReturnInt(TM_ECODE_FAILED);
+							}
+						} else {
+							rte_pktmbuf_free(acl_search.m_ipv4[i]);
+						}
+					}
+				} else {
+					for (i = 0; i < 4 && i < nb_rx; i++) {
+						rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
+					}
+
+					for (i = 0; i < (nb_rx - 4); i++) {
+						rte_prefetch0(rte_pktmbuf_mtod(bufs[i + 2], void *));
+						p = DpdkProcessPacket(ptv, bufs[i]);
+
+						ret = TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p);
+						if (unlikely(ret != TM_ECODE_OK)) {
+							ptv->failtx += (uint64_t)1;
+							TmqhOutputPacketpool(ptv->tv, p);
+							SCLogNotice(" failed TmThreadsSlotProcessPkt");
+							SCReturnInt(TM_ECODE_FAILED);
+						}
+					}
+
+					for (; i < nb_rx; i++) {
+						p = DpdkProcessPacket(ptv, bufs[i]);
+
+						ret = TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p);
+						if (unlikely(ret != TM_ECODE_OK)) {
+							ptv->failtx += (uint64_t)1;
+							TmqhOutputPacketpool(ptv->tv, p);
+							SCLogNotice(" failed TmThreadsSlotProcessPkt");
+							SCReturnInt(TM_ECODE_FAILED);
+						}
 					}
 				}
 			}

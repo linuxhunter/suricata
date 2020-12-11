@@ -14,6 +14,7 @@ if BUILD_FUZZTARGETS
 endif
 
 COMMON_SOURCES = \
+acl-dpdk.c acl-dpdk.h \
 alert-debuglog.c alert-debuglog.h \
 alert-fastlog.c alert-fastlog.h \
 alert-prelude.c alert-prelude.h \

@@ -1855,7 +1855,7 @@ napatech:
 
 # DPDK configuration. for use on DPDK instance
 dpdk:
-
+    pre-acl: no
     tx-fragment: no
     rx-reassemble: no
     # BYPASS, IDS, IPS
