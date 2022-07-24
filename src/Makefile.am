@@ -430,6 +430,7 @@ noinst_HEADERS = \
 	output-stats.h \
 	output-streaming.h \
 	output-tx.h \
+	output-redis-ics.h \
 	packet-queue.h \
 	pkt-var.h \
 	queue.h \
@@ -1026,6 +1027,7 @@ libsuricata_c_a_SOURCES = \
 	output-stats.c \
 	output-streaming.c \
 	output-tx.c \
+	output-redis-ics.c \
 	packet-queue.c \
 	pkt-var.c \
 	reputation.c \

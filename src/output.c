@@ -88,6 +88,7 @@
 #include "output-json-dcerpc.h"
 #include "output-json-frame.h"
 #include "output-filestore.h"
+#include "output-redis-ics.h"
 
 typedef struct RootLogger_ {
     OutputLogFunc LogFunc;
@@ -1127,4 +1128,6 @@ void OutputRegisterLoggers(void)
     JsonDCERPCLogRegister();
     /* app layer frames */
     JsonFrameLogRegister();
+	/* ICS Redis logger */
+	ICSRedisLogRegister();
 }
