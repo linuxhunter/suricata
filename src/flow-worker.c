@@ -569,15 +569,15 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
     // Outputs.
     OutputLoggerLog(tv, p, fw->output_thread);
 
-    /* Release ICS ADU Data */
-    detect_free_ics_adu(p->flow->ics_adu, p->flow->alproto);
-
     /* Prune any stored files. */
     FlowPruneFiles(p);
 
     /*  Release tcp segments. Done here after alerting can use them. */
     if (p->flow != NULL) {
         DEBUG_ASSERT_FLOW_LOCKED(p->flow);
+
+        /* Release ICS ADU Data */
+        detect_free_ics_adu(p->flow->ics_adu, p->flow->alproto);
 
         if (FlowIsBypassed(p->flow)) {
             FlowCleanupAppLayer(p->flow);
