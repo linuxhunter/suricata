@@ -1,14 +1,12 @@
 #include "suricata-common.h"
-#include "debug.h"
 #include "detect.h"
 #include "flow.h"
 #include "conf.h"
+#include "debug.h"
 #include "util-debug.h"
+#include "detect-ics.h"
 #include "output.h"
 #include "output-redis-ics.h"
-
-#include "app-layer-parser.h"
-#include "app-layer-modbus.h"
 
 #include <hiredis/hiredis.h>
 
@@ -25,40 +23,6 @@ typedef enum {
 	ICS_STUDY_DATA,
 	ICS_WARN_DATA,
 } ics_data_type_t;
-
-#define MODBUS_DATA_LEN_MAX	64
-typedef struct {
-	uint8_t funcode;
-	union {
-		struct addr_quan {
-			uint16_t address;
-			uint16_t quantity;
-		} addr_quan;
-		struct addr_data {
-			uint16_t address;
-			uint16_t data;
-		} addr_data;
-		struct subfunc {
-			uint16_t subfunction;
-		} subfunc;
-		struct addr_quan_data {
-			uint16_t address;
-			uint16_t quantity;
-			uint8_t data_len;
-			uint8_t data[MODBUS_DATA_LEN_MAX];
-		} addr_quan_data;
-		struct and_or_mask {
-			uint16_t and_mask;
-			uint16_t or_mask;
-		} and_or_mask;
-		struct rw_addr_quan {
-			uint16_t read_address;
-			uint16_t read_quantity;
-			uint16_t write_address;
-			uint16_t write_quantity;
-		} rw_addr_quan;
-	}u;
-} ics_modbus_t;
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p);
 int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p);
@@ -98,82 +62,6 @@ static int ICSSendRedisLog(redisContext *c, ics_data_type_t type, const char *da
 			}
 			break;
 		default:
-			break;
-	}
-out:
-	return ret;
-}
-
-static int get_modbus_adu(Flow *p, ics_modbus_t *ics_modbus)
-{
-	int ret = TM_ECODE_OK;
-	ModbusState *modbus_state = p->alstate;
-	ModbusMessage request;
-	int tx_counts = 0;
-	uint8_t funcode;
-
-	if (modbus_state == NULL) {
-		SCLogNotice("Modbus State is NULL\n");
-		ret = TM_ECODE_FAILED;
-		goto out;
-	}
-
-	tx_counts = rs_modbus_state_get_tx_count(modbus_state);
-	request = rs_modbus_state_get_tx_request(modbus_state, (tx_counts-1));
-	if (request._0 == NULL) {
-		SCLogNotice("Modbus Request is NULL\n");
-		ret = TM_ECODE_FAILED;
-		goto out;
-	}
-
-	funcode = rs_modbus_message_get_function(&request);
-	switch(funcode) {
-		case 1:
-		case 3:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.addr_quan.address = rs_modbus_message_get_read_request_address(&request);
-			ics_modbus->u.addr_quan.quantity = rs_modbus_message_get_read_request_quantity(&request);
-			break;
-		case 5:
-		case 6:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.addr_data.address = rs_modbus_message_get_write_address(&request);
-			ics_modbus->u.addr_data.data = rs_modbus_message_get_write_data(&request);
-			break;
-		case 8:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.subfunc.subfunction = rs_modbus_message_get_subfunction(&request);
-			break;
-		case 15:
-			{
-				size_t data_len;
-				const uint8_t *data = rs_modbus_message_get_write_multreq_data(&request, &data_len);
-				ics_modbus->funcode = funcode;
-				ics_modbus->u.addr_quan_data.address = rs_modbus_message_get_write_multreq_address(&request);
-				ics_modbus->u.addr_quan_data.quantity = rs_modbus_message_get_write_multreq_quantity(&request);
-				ics_modbus->u.addr_quan_data.data_len = data_len;
-				memcpy(&ics_modbus->u.addr_quan_data.data, data, sizeof(ics_modbus->u.addr_quan_data.data));
-			}
-			break;
-		case 16:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.addr_quan.address = rs_modbus_message_get_write_multreq_address(&request);
-			ics_modbus->u.addr_quan.quantity = rs_modbus_message_get_write_multreq_quantity(&request);
-			break;
-		case 22:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.and_or_mask.and_mask = rs_modbus_message_get_and_mask(&request);
-			ics_modbus->u.and_or_mask.or_mask = rs_modbus_message_get_or_mask(&request);
-			break;
-		case 23:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.rw_addr_quan.read_address = rs_modbus_message_get_rw_multreq_read_address(&request);
-			ics_modbus->u.rw_addr_quan.read_quantity = rs_modbus_message_get_rw_multreq_read_quantity(&request);
-			ics_modbus->u.rw_addr_quan.write_address = rs_modbus_message_get_rw_multreq_write_address(&request);
-			ics_modbus->u.rw_addr_quan.write_quantity = rs_modbus_message_get_rw_multreq_write_quantity(&request);
-			break;
-		default:
-			ics_modbus->funcode = funcode;
 			break;
 	}
 out:
@@ -246,22 +134,38 @@ static int create_modbus_audit_data(ics_modbus_t *modbus, char *audit_data, size
 	return TM_ECODE_OK;
 }
 
+static int create_dnp3_audit_data(ics_dnp3_t *dnp3, char *audit_data, size_t audit_data_len)
+{
+	int len = 0;
+
+	len += snprintf(audit_data + len, audit_data_len - len, "funcode = 0x%hhx, ", dnp3->function_code);
+	for (uint32_t i = 0; i < dnp3->object_count; i++) {
+		len += snprintf(audit_data + len, audit_data_len - len, "obj[%u]: group = 0x%hhx, variation = 0x%hhx, ", i, dnp3->objects[i].group, dnp3->objects[i].variation);
+		for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
+			len += snprintf(audit_data + len, audit_data_len - len, "point[%u]: index = 0x%x, size = 0x%x, ", j, dnp3->objects[i].points[j].index, dnp3->objects[i].points[j].size);
+		}
+		len -= 2;
+		len += snprintf(audit_data + len, audit_data_len - len , "\n");
+	}
+	return TM_ECODE_OK;
+}
+
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 {
 	redisContext *c = (redisContext *)data;
+	ics_adu_t *ics_adu = NULL;
 	char audit_data[256] = {0};
-	ics_modbus_t modbus;
 
-	switch(p->flow->alproto) {
+	if (p->flow == NULL || p->flow->ics_adu == NULL)
+		goto out;
+
+	ics_adu = p->flow->ics_adu;
+	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
-			{
-				memset(&modbus, 0x00, sizeof(modbus));
-				if (get_modbus_adu(p->flow, &modbus) != TM_ECODE_OK) {
-					SCLogNotice("get modbus adu error.\n");
-					goto out;
-				}
-				create_modbus_audit_data(&modbus, audit_data, sizeof(audit_data));
-			}
+			create_modbus_audit_data(&ics_adu->u.modbus[ICS_ADU_REAL_INDEX], audit_data, sizeof(audit_data));
+			break;
+		case ALPROTO_DNP3:
+			create_dnp3_audit_data(&ics_adu->u.dnp3[ICS_ADU_REAL_INDEX], audit_data, sizeof(audit_data));
 			break;
 		default:
 			goto out;
@@ -275,7 +179,26 @@ out:
 
 int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p)
 {
-	return (p->flow->alproto == ALPROTO_MODBUS) ? TRUE : FALSE;
+	int ret = FALSE;
+
+	if (p == NULL || p->flow == NULL) {
+		goto out;
+	}
+
+	switch(p->flow->alproto) {
+		case ALPROTO_MODBUS:
+			if (p->flowflags & FLOW_PKT_TOSERVER)
+				ret = TRUE;
+			break;
+		case ALPROTO_DNP3:
+			if (p->flowflags & FLOW_PKT_TOSERVER)
+				ret = TRUE;
+			break;
+		default:
+			break;
+	}
+out:
+	return ret;
 }
 
 TmEcode ICSRadisLogThreadInit(ThreadVars *t, const void *initdata, void **data)

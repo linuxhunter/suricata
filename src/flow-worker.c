@@ -49,6 +49,8 @@
 #include "flow-timeout.h"
 #include "flow-spare-pool.h"
 
+#include "detect-ics.h"
+
 typedef DetectEngineThreadCtx *DetectEngineThreadCtxPtr;
 
 typedef struct FlowTimeoutCounters {
@@ -552,6 +554,9 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
 
     PacketUpdateEngineEventCounters(tv, fw->dtv, p);
 
+    /* Create ICS ADU Data */
+    detect_ics_adu(tv, p);
+
     /* handle Detect */
     DEBUG_ASSERT_FLOW_LOCKED(p->flow);
     SCLogDebug("packet %"PRIu64" calling Detect", p->pcap_cnt);
@@ -563,6 +568,9 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
 
     // Outputs.
     OutputLoggerLog(tv, p, fw->output_thread);
+
+    /* Release ICS ADU Data */
+    detect_free_ics_adu(p->flow->ics_adu, p->flow->alproto);
 
     /* Prune any stored files. */
     FlowPruneFiles(p);

@@ -487,6 +487,7 @@ typedef struct Flow_
      */
     AppLayerParserState *alparser;     /**< parser internal state */
     void *alstate;      /**< application layer state */
+    void *ics_adu;     /**< detect ics adu data */
 
     /** toclient sgh for this flow. Only use when FLOW_SGH_TOCLIENT flow flag
      *  has been set. */
