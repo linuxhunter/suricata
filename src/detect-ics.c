@@ -7,7 +7,10 @@
 
 #include "detect-ics.h"
 
-void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto)
+ics_mode_t global_ics_work_mode;
+const char *global_ics_template_name;
+
+void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, const char *template_name)
 {
 	ics_adu_t *ics_adu = SCMalloc(sizeof(ics_adu_t));
 
@@ -22,6 +25,8 @@ void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto)
 		goto error;
 	ics_adu->work_mode = work_mode;
 	ics_adu->proto = proto;
+	if (template_name)
+		ics_adu->template_name = strdup(template_name);
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
 			{
@@ -65,6 +70,7 @@ void detect_free_ics_adu(ics_adu_t *ics_adu, enum AppProtoEnum proto)
 		default:
 			break;
 	}
+	free(ics_adu->template_name);
 out:
 	return;
 }
@@ -82,8 +88,9 @@ int detect_get_ics_adu(Flow *p, ics_adu_t *ics_adu)
 			break;
 		default:
 			ret = TM_ECODE_FAILED;
-			break;
+			goto out;
 	}
+out:
 	return ret;
 }
 
@@ -94,7 +101,7 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 	if (p->flow) {
 		if (p->flow->alproto == ALPROTO_MODBUS ||
 			p->flow->alproto == ALPROTO_DNP3) {
-			ics_adu = detect_create_ics_adu(ICS_MODE_NORMAL, p->flow->alproto);
+			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_name);
 			if (ics_adu == NULL) {
 				SCLogNotice("create modbus adu error.\n");
 				goto error;
@@ -112,4 +119,33 @@ error:
 	if (ics_adu)
 		detect_free_ics_adu(ics_adu, p->flow->alproto);
 	return TM_ECODE_FAILED;
+}
+
+int ParseICSControllerSettings(void)
+{
+	int ret = TM_ECODE_OK;
+	const char *conf_val;
+
+	if ((ConfGet("ics-control.work-mode", &conf_val)) == 1) {
+		if (!strncmp(conf_val, "study", strlen("study")))
+			global_ics_work_mode = ICS_MODE_STUDY;
+		else if (!strncmp(conf_val, "warning", strlen("warning")))
+			global_ics_work_mode = ICS_MODE_WARNING;
+		else
+			global_ics_work_mode = ICS_MODE_NORMAL;
+	} else {
+		global_ics_work_mode = ICS_MODE_NORMAL;
+	}
+	if (global_ics_work_mode == ICS_MODE_STUDY ||
+		global_ics_work_mode == ICS_MODE_WARNING) {
+		if ((ConfGet("ics-control.template-name", &conf_val)) == 1) {
+			global_ics_template_name = conf_val;
+		} else {
+			global_ics_template_name = NULL;
+			ret = TM_ECODE_FAILED;
+			goto out;
+		}
+	}
+out:
+	return ret;
 }

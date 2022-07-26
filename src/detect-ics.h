@@ -19,14 +19,16 @@ typedef enum {
 typedef struct {
 	ics_mode_t work_mode;
 	enum AppProtoEnum proto;
+	char *template_name;
 	union {
 		ics_modbus_t *modbus;
 		ics_dnp3_t *dnp3;
 	}u;
 } ics_adu_t;
 
-void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto);
+void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, const char *template_name);
 void detect_free_ics_adu(ics_adu_t *ics_adu, enum AppProtoEnum proto);
 int detect_get_ics_adu(Flow *p, ics_adu_t *ics_adu);
 TmEcode detect_ics_adu(ThreadVars *tv, Packet *p);
+int ParseICSControllerSettings(void);
 #endif

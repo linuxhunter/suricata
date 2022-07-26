@@ -59,6 +59,8 @@
 #include "detect-engine-port.h"
 #include "detect-engine-mpm.h"
 
+#include "detect-ics.h"
+
 #include "tm-queuehandlers.h"
 #include "tm-queues.h"
 #include "tm-threads.h"
@@ -2649,6 +2651,10 @@ int PostConfLoadedSetup(SCInstance *suri)
         }
     }
 
+	/* getting ICS Controller settings from suricata.yaml */
+	if (ParseICSControllerSettings() != TM_ECODE_OK) {
+		SCReturnInt(TM_ECODE_FAILED);
+	}
 
     if (ConfigGetCaptureValue(suri) != TM_ECODE_OK) {
         SCReturnInt(TM_ECODE_FAILED);

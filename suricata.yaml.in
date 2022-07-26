@@ -80,6 +80,9 @@ plugins:
 
 # Configure the type of alert (and other) logging you would like.
 outputs:
+  # ics redis output
+  - ics-redis:
+      enabled: yes
   # a line based alerts log similar to Snort's fast.log
   - fast:
       enabled: yes
@@ -1064,6 +1067,13 @@ app-layer:
 
     sip:
       #enabled: yes
+
+# ICS related settings
+ics-control:
+    # valid ics work mode is normal/study/warning
+    work-mode: normal
+    # ics template name for warning mode
+    template-name: t1
 
 # Limit for the maximum number of asn1 frames to decode (default 256)
 asn1-max-frames: 256
