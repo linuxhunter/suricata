@@ -1072,8 +1072,8 @@ app-layer:
 ics-control:
     # valid ics work mode is normal/study/warning
     work-mode: normal
-    # ics template name for warning mode
-    template-name: t1
+    # ics template id for warning mode
+    template-id: 1
 
 # Limit for the maximum number of asn1 frames to decode (default 256)
 asn1-max-frames: 256

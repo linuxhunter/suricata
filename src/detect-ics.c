@@ -8,9 +8,9 @@
 #include "detect-ics.h"
 
 ics_mode_t global_ics_work_mode;
-const char *global_ics_template_name;
+intmax_t global_ics_template_id;
 
-void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, const char *template_name)
+void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intmax_t template_id)
 {
 	ics_adu_t *ics_adu = SCMalloc(sizeof(ics_adu_t));
 
@@ -25,8 +25,7 @@ void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, const
 		goto error;
 	ics_adu->work_mode = work_mode;
 	ics_adu->proto = proto;
-	if (template_name)
-		ics_adu->template_name = strdup(template_name);
+	ics_adu->template_id = template_id;
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
 			{
@@ -70,7 +69,6 @@ void detect_free_ics_adu(ics_adu_t *ics_adu, enum AppProtoEnum proto)
 		default:
 			break;
 	}
-	free(ics_adu->template_name);
 out:
 	return;
 }
@@ -101,7 +99,7 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 	if (p->flow) {
 		if (p->flow->alproto == ALPROTO_MODBUS ||
 			p->flow->alproto == ALPROTO_DNP3) {
-			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_name);
+			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_id);
 			if (ics_adu == NULL) {
 				SCLogNotice("create modbus adu error.\n");
 				goto error;
@@ -125,6 +123,7 @@ int ParseICSControllerSettings(void)
 {
 	int ret = TM_ECODE_OK;
 	const char *conf_val;
+	intmax_t template_id = 0;
 
 	if ((ConfGet("ics-control.work-mode", &conf_val)) == 1) {
 		if (!strncmp(conf_val, "study", strlen("study")))
@@ -138,10 +137,10 @@ int ParseICSControllerSettings(void)
 	}
 	if (global_ics_work_mode == ICS_MODE_STUDY ||
 		global_ics_work_mode == ICS_MODE_WARNING) {
-		if ((ConfGet("ics-control.template-name", &conf_val)) == 1) {
-			global_ics_template_name = conf_val;
+		if ((ConfGetInt("ics-control.template-id", &template_id)) == 1) {
+			global_ics_template_id = template_id;
 		} else {
-			global_ics_template_name = NULL;
+			global_ics_template_id = 0;
 			ret = TM_ECODE_FAILED;
 			goto out;
 		}
