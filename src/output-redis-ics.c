@@ -250,7 +250,7 @@ out:
 }
 
 #define DNP3_OBJECT_BUFFER_LENGTH	1024
-static int serialize_dnp3_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **audit_data, int *audit_data_len)
+static int serialize_audit_dnp3_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **audit_data, int *audit_data_len)
 {
 	int ret = TM_ECODE_OK;
 	tlv_box_t *box = NULL;
@@ -259,7 +259,6 @@ static int serialize_dnp3_data(const Packet *p, int template_id, ics_dnp3_t *dnp
 
 	box = tlv_box_create();
 	tlv_box_put_int(box, BEGIN, 0);
-	tlv_box_put_int(box, TEMPLATE_ID, template_id);
 	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
 	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
 	tlv_box_put_ushort(box, SRC_PORT, GET_TCP_SRC_PORT(p));
@@ -313,6 +312,67 @@ out:
 	return ret;
 }
 
+static int serialize_study_dnp3_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **study_data, int *study_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *study_data_ptr = NULL;
+	MemBuffer *dnp3_object_buffer = NULL;
+
+	box = tlv_box_create();
+	tlv_box_put_int(box, BEGIN, 0);
+	tlv_box_put_int(box, TEMPLATE_ID, template_id);
+	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
+	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
+	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	tlv_box_put_uchar(box, APP_PROTO, DNP3);
+	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->function_code);
+	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->object_count);
+	if (dnp3->object_count > 0) {
+		dnp3_object_buffer = MemBufferCreateNew(DNP3_OBJECT_BUFFER_LENGTH);
+		if (dnp3_object_buffer == NULL) {
+			SCLogNotice("create DNP3 Object MemBuffer error.\n");
+			ret = TM_ECODE_FAILED;
+			goto out;
+		}
+		for (uint32_t i = 0; i < dnp3->object_count; i++) {
+			if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint8_t)*2 + sizeof(uint32_t) >= MEMBUFFER_SIZE(dnp3_object_buffer))
+				MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
+			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].group, sizeof(uint8_t));
+			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].variation, sizeof(uint8_t));
+			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].point_count, sizeof(uint32_t));
+			for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
+				if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_object_buffer))
+					MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
+				MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].points[j].index, sizeof(uint32_t));
+				MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].points[j].size, sizeof(uint32_t));
+			}
+		}
+		tlv_box_put_bytes(box, DNP3_OBJECTS, MEMBUFFER_BUFFER(dnp3_object_buffer), MEMBUFFER_OFFSET(dnp3_object_buffer));
+		MemBufferFree(dnp3_object_buffer);
+	}
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*study_data_len = tlv_box_get_size(box);
+	if ((*study_data = SCMalloc(*study_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*study_data, 0x00, *study_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*study_data), *study_data_len, "%d:", *study_data_len);
+	study_data_ptr = (uint8_t *)strchr((char *)(*study_data), ':');
+	study_data_ptr++;
+	memcpy(study_data_ptr, tlv_box_get_buffer(box), *study_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
@@ -330,12 +390,12 @@ static int create_modbus_warning_data(const Packet *p, int template_id, ics_modb
 
 static int create_dnp3_audit_data(const Packet *p, ics_dnp3_t *dnp3, uint8_t **audit_data, int *audit_data_len)
 {
-	return serialize_dnp3_data(p, 0, dnp3, audit_data, audit_data_len);
+	return serialize_audit_dnp3_data(p, 0, dnp3, audit_data, audit_data_len);
 }
 
 static int create_dnp3_study_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **study_data, int *study_data_len)
 {
-	return serialize_dnp3_data(p, template_id, dnp3, study_data, study_data_len);
+	return serialize_study_dnp3_data(p, template_id, dnp3, study_data, study_data_len);
 }
 
 static int create_dnp3_warning_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **warning_data, int *warning_data_len)
