@@ -4,11 +4,72 @@
 #include "conf.h"
 #include "debug.h"
 #include "util-debug.h"
+#include "util-hash.h"
 
 #include "detect-ics.h"
+#include "util-ics.h"
 
 ics_mode_t global_ics_work_mode;
 intmax_t global_ics_template_id;
+ics_hashtable_t global_ics_hashtables[ICS_PROTO_MAX];
+
+static int init_ics_hashtables(void)
+{
+	int ret = TM_ECODE_OK;
+
+	for (int i = 0; i < ICS_PROTO_MAX; i++) {
+		SCMutexInit(&global_ics_hashtables[i].mutex, NULL);
+		switch(i) {
+			case MODBUS:
+				ret = init_modbus_hashtable(&global_ics_hashtables[i].hashtable, ICS_HASHTABLE_SIZE);
+				break;
+			case DNP3:
+				ret = init_dnp3_hashtable(&global_ics_hashtables[i].hashtable, ICS_HASHTABLE_SIZE);
+				break;
+			default:
+				continue;
+		}
+		if (global_ics_hashtables[i].hashtable == NULL) {
+			ret = TM_ECODE_FAILED;
+			goto out;
+		}
+	}
+out:
+	return ret;
+}
+
+static int create_ics_hashtables(intmax_t template_id)
+{
+	for (int i = 0; i < ICS_PROTO_MAX; i++) {
+		switch(i) {
+			case MODBUS:
+				SCMutexLock(&global_ics_hashtables[MODBUS].mutex);
+				create_modbus_hashtable(global_ics_hashtables[MODBUS].hashtable, template_id);
+				SCMutexUnlock(&global_ics_hashtables[MODBUS].mutex);
+				break;
+			case DNP3:
+				SCMutexLock(&global_ics_hashtables[DNP3].mutex);
+				create_dnp3_hashtable(global_ics_hashtables[DNP3].hashtable, template_id);
+				SCMutexUnlock(&global_ics_hashtables[DNP3].mutex);
+				break;
+			default:
+				break;
+		}
+	}
+	return 0;
+}
+
+static void free_ics_hashtables(void)
+{
+	for (int i = 0; i < ICS_PROTO_MAX; i++) {
+		SCMutexLock(&global_ics_hashtables[i].mutex);
+		if (global_ics_hashtables[i].hashtable != NULL) {
+			HashTableFree(global_ics_hashtables[i].hashtable);
+			global_ics_hashtables[i].hashtable = NULL;
+		}
+		SCMutexUnlock(&global_ics_hashtables[i].mutex);
+	}
+}
 
 void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intmax_t template_id)
 {
@@ -61,10 +122,12 @@ void detect_free_ics_adu(ics_adu_t *ics_adu, enum AppProtoEnum proto)
 		goto out;
 	switch(proto) {
 		case ALPROTO_MODBUS:
-			SCFree(ics_adu->u.modbus);
+			if (ics_adu->u.modbus != NULL)
+				SCFree(ics_adu->u.modbus);
 			break;
 		case ALPROTO_DNP3:
-			SCFree(ics_adu->u.dnp3);
+			if (ics_adu->u.dnp3 != NULL)
+				SCFree(ics_adu->u.dnp3);
 			break;
 		default:
 			break;
@@ -73,16 +136,24 @@ out:
 	return;
 }
 
-int detect_get_ics_adu(Flow *p, ics_adu_t *ics_adu)
+int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 {
 	int ret = TM_ECODE_OK;
 
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
-			ret = detect_get_modbus_adu(p, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX]);
+			ret = detect_get_modbus_adu(p->flow, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX]);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			if (global_ics_work_mode == ICS_MODE_WARNING) {
+				if (match_modbus_ht_item(global_ics_hashtables[MODBUS].hashtable, p, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX]) == 0)
+					ics_adu->invalid = 1;
+			}
 			break;
 		case ALPROTO_DNP3:
-			ret = detect_get_dnp3_adu(p, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX]);
+			ret = detect_get_dnp3_adu(p->flow, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX]);
+			if (ret != TM_ECODE_OK)
+				goto out;
 			break;
 		default:
 			ret = TM_ECODE_FAILED;
@@ -97,18 +168,21 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 	ics_adu_t *ics_adu = NULL;
 
 	if (p->flow) {
+		p->flow->ics_adu = NULL;
 		if (p->flow->alproto == ALPROTO_MODBUS ||
 			p->flow->alproto == ALPROTO_DNP3) {
-			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_id);
-			if (ics_adu == NULL) {
-				SCLogNotice("create modbus adu error.\n");
-				goto error;
+			if (p->flowflags & FLOW_PKT_TOSERVER) {
+				ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_id);
+				if (ics_adu == NULL) {
+					SCLogNotice("create modbus adu error.\n");
+					goto error;
+				}
+				if (detect_get_ics_adu(p, ics_adu) != TM_ECODE_OK) {
+					SCLogNotice("get modbus adu error.\n");
+					goto error;
+				}
+				p->flow->ics_adu = (void *)ics_adu;
 			}
-			if (detect_get_ics_adu(p->flow, ics_adu) != TM_ECODE_OK) {
-				SCLogNotice("get modbus adu error.\n");
-				goto error;
-			}
-			p->flow->ics_adu = (void *)ics_adu;
 		}
 	}
 	return TM_ECODE_OK;
@@ -144,6 +218,14 @@ int ParseICSControllerSettings(void)
 			ret = TM_ECODE_FAILED;
 			goto out;
 		}
+	}
+	if (global_ics_work_mode == ICS_MODE_WARNING) {
+		if (init_ics_hashtables() != TM_ECODE_OK) {
+			SCLogNotice("init ics hashtables error.\n");
+			ret = TM_ECODE_FAILED;
+			goto out;
+		}
+		create_ics_hashtables(template_id);
 	}
 out:
 	return ret;

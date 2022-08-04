@@ -35,5 +35,20 @@ typedef struct {
     }u;
 } ics_modbus_t;
 
+typedef struct {
+	uint32_t sip;
+	uint32_t dip;
+	uint8_t proto;
+	uint8_t funcode;
+	uint16_t address;
+	uint16_t quantity;
+} modbus_ht_item_t;
+
 int detect_get_modbus_adu(Flow *p, ics_modbus_t *ics_modbus);
+modbus_ht_item_t* alloc_modbus_ht_item(uint32_t sip, uint32_t dip, uint8_t proto, uint8_t funcode, uint16_t address, uint16_t quantity);
+void free_modbus_ht_item(modbus_ht_item_t *modbus_item);
+int init_modbus_hashtable(HashTable **ht, uint32_t size);
+int create_modbus_hashtable(HashTable *ht, intmax_t template_id);
+int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus);
+
 #endif

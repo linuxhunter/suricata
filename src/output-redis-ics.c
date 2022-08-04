@@ -13,66 +13,19 @@
 #include <hiredis/hiredis.h>
 #include <tlv_box.h>
 
-#define MODULE_NAME	"ICSRadisLog"
-#define REDIS_SERVER_IP	"127.0.0.1"
-#define REDIS_SERVER_PORT	6379
-#define REDIS_PUBLISH_CMD	"PUBLISH"
-#define ICS_AUDIT_CHANNEL	"ChannelICSAudit"
-#define ICS_STUDY_CHANNEL	"ChannelICSStudy"
-#define ICS_WARN_CHANNEL	"ChannelICSWarn"
-#define ICS_AUDIT_DATA_BUF_MAX	256
-#define ICS_STUDY_DATA_BUF_MAX	256
-#define ICS_WARN_DATA_BUF_MAX	512
-
-enum {
-	MODBUS = 1,
-	DNP3,
-};
-
-enum {
-	BEGIN = 1,
-	TEMPLATE_ID,
-	SRC_IPv4,
-	DST_IPv4,
-	SRC_PORT,
-	DST_PORT,
-	PROTO,
-	APP_PROTO,
-	MODBUS_FUNCODE,
-	MODBUS_RADDR,
-	MODBUS_RQUANTITY,
-	MODBUS_WADDR,
-	MODBUS_WQUANTITY,
-	MODBUS_SUBFUNC,
-	MODBUS_AND_MASK,
-	MODBUS_OR_MASK,
-	MODBUS_DATA_LEN,
-	MODBUS_DATA,
-	DNP3_FUNCODE,
-	DNP3_OBJECT_COUNTS,
-	DNP3_OBJECTS,
-	END,
-};
-
-typedef enum {
-	ICS_AUDIT_DATA,
-	ICS_STUDY_DATA,
-	ICS_WARN_DATA,
-} ics_data_type_t;
-
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p);
 int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p);
 TmEcode ICSRadisLogThreadInit(ThreadVars *t, const void *initdata, void **data);
 TmEcode ICSRadisLogThreadDeinit(ThreadVars *t, void *data);
 void ICSRadisLogRegister(void);
 
-static int ICSSendRedisLog(redisContext *c, ics_data_type_t type, uint8_t *data, size_t data_len)
+static int ICSSendRedisLog(redisContext *c, ics_mode_t mode, uint8_t *data, size_t data_len)
 {
 	int ret = TM_ECODE_OK;
 	redisReply *reply = NULL;
 
-	switch(type) {
-		case ICS_AUDIT_DATA:
+	switch(mode) {
+		case ICS_MODE_NORMAL:
 			reply = redisCommand(c, "%s %s %b", REDIS_PUBLISH_CMD, ICS_AUDIT_CHANNEL, data, data_len);
 			if (reply == NULL) {
 				SCLogNotice("publish %s with data error.\n", ICS_AUDIT_CHANNEL);
@@ -81,7 +34,7 @@ static int ICSSendRedisLog(redisContext *c, ics_data_type_t type, uint8_t *data,
 			}
 			freeReplyObject(reply);
 			break;
-		case ICS_STUDY_DATA:
+		case ICS_MODE_STUDY:
 			reply = redisCommand(c, "%s %s %b", REDIS_PUBLISH_CMD, ICS_STUDY_CHANNEL, data, data_len);
 			if (reply == NULL) {
 				SCLogNotice("public %s with data error.\n", ICS_STUDY_CHANNEL);
@@ -89,7 +42,7 @@ static int ICSSendRedisLog(redisContext *c, ics_data_type_t type, uint8_t *data,
 				goto out;
 			}
 			break;
-		case ICS_WARN_DATA:
+		case ICS_MODE_WARNING:
 			reply = redisCommand(c, "%s %s %b", REDIS_PUBLISH_CMD, ICS_WARN_CHANNEL, data, data_len);
 			if (reply == NULL) {
 				SCLogNotice("public %s with data error.\n", ICS_WARN_CHANNEL);
@@ -385,7 +338,7 @@ static int create_modbus_study_data(const Packet *p, int template_id, ics_modbus
 
 static int create_modbus_warning_data(const Packet *p, int template_id, ics_modbus_t *modbus, uint8_t **warning_data, int *warning_data_len)
 {
-	return serialize_audit_modbus_data(p, template_id, modbus, warning_data, warning_data_len);
+	return serialize_study_modbus_data(p, template_id, modbus, warning_data, warning_data_len);
 }
 
 static int create_dnp3_audit_data(const Packet *p, ics_dnp3_t *dnp3, uint8_t **audit_data, int *audit_data_len)
@@ -420,19 +373,21 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			ret = create_modbus_audit_data(p, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX], &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
-			ICSSendRedisLog(c, ICS_AUDIT_DATA, audit_data, audit_data_len);
+			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			switch(ics_adu->work_mode) {
 				case ICS_MODE_STUDY:
 					ret = create_modbus_study_data(p, ics_adu->template_id, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX], &study_data, &study_data_len);
 					if (ret != TM_ECODE_OK)
 						goto out;
-					ICSSendRedisLog(c, ICS_STUDY_DATA, study_data, study_data_len);
+					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
 					break;
 				case ICS_MODE_WARNING:
-					ret = create_modbus_warning_data(p, ics_adu->template_id, ics_adu->u.modbus, &warning_data, &warning_data_len);
-					if (ret != TM_ECODE_OK)
-						goto out;
-					ICSSendRedisLog(c, ICS_WARN_DATA, warning_data, warning_data_len);
+					if (ics_adu->invalid) {
+						ret = create_modbus_warning_data(p, ics_adu->template_id, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX], &warning_data, &warning_data_len);
+						if (ret != TM_ECODE_OK)
+							goto out;
+						ICSSendRedisLog(c, ICS_MODE_WARNING, warning_data, warning_data_len);
+					}
 					break;
 				default:
 					break;
@@ -442,19 +397,21 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			ret = create_dnp3_audit_data(p, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX], &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
-			ICSSendRedisLog(c, ICS_AUDIT_DATA, audit_data, audit_data_len);
+			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			switch(ics_adu->work_mode) {
 				case ICS_MODE_STUDY:
 					ret = create_dnp3_study_data(p, ics_adu->template_id, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX], &study_data, &study_data_len);
 					if (ret != TM_ECODE_OK)
 						goto out;
-					ICSSendRedisLog(c, ICS_STUDY_DATA, study_data, study_data_len);
+					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
 					break;
 				case ICS_MODE_WARNING:
-					ret = create_dnp3_warning_data(p, ics_adu->template_id, ics_adu->u.dnp3, &warning_data, &warning_data_len);
-					if (ret != TM_ECODE_OK)
-						goto out;
-					ICSSendRedisLog(c, ICS_WARN_DATA, warning_data, warning_data_len);
+					if (ics_adu->invalid) {
+						ret = create_dnp3_warning_data(p, ics_adu->template_id, ics_adu->u.dnp3, &warning_data, &warning_data_len);
+						if (ret != TM_ECODE_OK)
+							goto out;
+						ICSSendRedisLog(c, ICS_MODE_WARNING, warning_data, warning_data_len);
+					}
 					break;
 				default:
 					break;

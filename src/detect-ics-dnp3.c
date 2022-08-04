@@ -85,3 +85,90 @@ int detect_get_dnp3_adu(Flow *p, ics_dnp3_t *ics_dnp3)
 out:
 	return ret;
 }
+
+static uint32_t ics_dnp3_hashfunc(HashTable *ht, void *data, uint16_t datalen)
+{
+	return HashTableGenericHash(ht, data, datalen);
+}
+
+static char ics_dnp3_hash_comparefunc(void *data1, uint16_t datalen1,
+							  void *data2, uint16_t datalen2)
+{
+	char ret = 0;
+	dnp3_ht_item_t *item1 = (dnp3_ht_item_t *)data1;
+	dnp3_ht_item_t *item2 = (dnp3_ht_item_t *)data2;
+
+	if (item1 == NULL || item2 == NULL)
+		goto out;
+	if (item1->sip == item2->sip &&
+		item1->dip == item2->dip &&
+		item1->proto == item2->proto &&
+		item1->funcode == item2->funcode &&
+		item1->group == item2->group &&
+		item1->variation == item2->variation &&
+		item1->index == item2->index &&
+		item1->size == item2->size) {
+		ret = 1;
+		goto out;
+	}
+out:
+	return ret;
+}
+
+static void ics_dnp3_hashfree(void *data)
+{
+	free_dnp3_ht_item(data);
+}
+
+
+int init_dnp3_hashtable(HashTable **ht, uint32_t size)
+{
+    *ht = HashTableInit(size, ics_dnp3_hashfunc, ics_dnp3_hash_comparefunc, ics_dnp3_hashfree);
+    if (*ht != NULL)
+        return TM_ECODE_OK;
+    else
+        return TM_ECODE_FAILED;
+}
+
+dnp3_ht_item_t* alloc_dnp3_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
+	uint8_t funcode, uint8_t group, uint8_t variation, uint32_t index, uint32_t size)
+{
+	dnp3_ht_item_t *dnp3_item = NULL;
+
+	if ((dnp3_item = SCMalloc(sizeof(dnp3_ht_item_t))) == NULL) {
+		goto out;
+	}
+	dnp3_item->sip = sip;
+	dnp3_item->dip = dip;
+	dnp3_item->proto = proto;
+	dnp3_item->funcode = funcode;
+	dnp3_item->group = group;
+	dnp3_item->variation = variation;
+	dnp3_item->index = index;
+	dnp3_item->size = size;
+out:
+	return dnp3_item;
+}
+
+void free_dnp3_ht_item(dnp3_ht_item_t *dnp3_item)
+{
+	if (dnp3_item)
+		SCFree(dnp3_item);
+	return;
+}
+
+int add_dnp3_ht_item(HashTable *ht, dnp3_ht_item_t *dnp3_item)
+{
+	return 0;
+}
+
+int match_dnp3_ht_item(HashTable *ht, dnp3_ht_item_t *dnp3_item)
+{
+	return 0;
+}
+
+int create_dnp3_hashtable(HashTable *ht, intmax_t template_id)
+{
+	return 0;
+}
+
