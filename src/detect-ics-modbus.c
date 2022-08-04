@@ -89,6 +89,29 @@ out:
 	return ret;
 }
 
+static modbus_ht_item_t* alloc_modbus_ht_item(uint32_t sip, uint32_t dip, uint8_t proto, uint8_t funcode, uint16_t address, uint16_t quantity)
+{
+	modbus_ht_item_t *modbus_item = NULL;
+
+	if ((modbus_item = SCMalloc(sizeof(modbus_ht_item_t))) == NULL)
+		goto out;
+	modbus_item->sip = sip;
+	modbus_item->dip = dip;
+	modbus_item->proto = proto;
+	modbus_item->funcode = funcode;
+	modbus_item->address = address;
+	modbus_item->quantity = quantity;
+out:
+	return modbus_item;
+}
+
+static void free_modbus_ht_item(modbus_ht_item_t *modbus_item)
+{
+	if (modbus_item != NULL)
+		SCFree(modbus_item);
+	return;
+}
+
 static uint32_t ics_modbus_hashfunc(HashTable *ht, void *data, uint16_t datalen)
 {
 	return HashTableGenericHash(ht, data, datalen);
@@ -139,29 +162,6 @@ static int add_modbus_ht_item(HashTable *ht, modbus_ht_item_t *modbus_item)
 	}
 out:
 	return ret;
-}
-
-modbus_ht_item_t* alloc_modbus_ht_item(uint32_t sip, uint32_t dip, uint8_t proto, uint8_t funcode, uint16_t address, uint16_t quantity)
-{
-	modbus_ht_item_t *modbus_item = NULL;
-
-	if ((modbus_item = SCMalloc(sizeof(modbus_ht_item_t))) == NULL)
-		goto out;
-	modbus_item->sip = sip;
-	modbus_item->dip = dip;
-	modbus_item->proto = proto;
-	modbus_item->funcode = funcode;
-	modbus_item->address = address;
-	modbus_item->quantity = quantity;
-out:
-	return modbus_item;
-}
-
-void free_modbus_ht_item(modbus_ht_item_t *modbus_item)
-{
-	if (modbus_item != NULL)
-		SCFree(modbus_item);
-	return;
 }
 
 int init_modbus_hashtable(HashTable **ht, uint32_t size)
