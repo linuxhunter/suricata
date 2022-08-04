@@ -353,7 +353,7 @@ static int create_dnp3_study_data(const Packet *p, int template_id, ics_dnp3_t *
 
 static int create_dnp3_warning_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **warning_data, int *warning_data_len)
 {
-	return 0;
+	return serialize_study_dnp3_data(p, template_id, dnp3, warning_data, warning_data_len);
 }
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)

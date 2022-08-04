@@ -4,6 +4,7 @@
 #include "conf.h"
 #include "debug.h"
 #include "util-debug.h"
+#include "util-ics.h"
 #include "app-layer-parser.h"
 #include "app-layer-dnp3.h"
 
@@ -86,6 +87,33 @@ out:
 	return ret;
 }
 
+static dnp3_ht_item_t* alloc_dnp3_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
+	uint8_t funcode, uint8_t group, uint8_t variation, uint32_t index, uint32_t size)
+{
+	dnp3_ht_item_t *dnp3_item = NULL;
+
+	if ((dnp3_item = SCMalloc(sizeof(dnp3_ht_item_t))) == NULL) {
+		goto out;
+	}
+	dnp3_item->sip = sip;
+	dnp3_item->dip = dip;
+	dnp3_item->proto = proto;
+	dnp3_item->funcode = funcode;
+	dnp3_item->group = group;
+	dnp3_item->variation = variation;
+	dnp3_item->index = index;
+	dnp3_item->size = size;
+out:
+	return dnp3_item;
+}
+
+static void free_dnp3_ht_item(dnp3_ht_item_t *dnp3_item)
+{
+	if (dnp3_item)
+		SCFree(dnp3_item);
+	return;
+}
+
 static uint32_t ics_dnp3_hashfunc(HashTable *ht, void *data, uint16_t datalen)
 {
 	return HashTableGenericHash(ht, data, datalen);
@@ -120,6 +148,23 @@ static void ics_dnp3_hashfree(void *data)
 	free_dnp3_ht_item(data);
 }
 
+static int add_dnp3_ht_item(HashTable *ht, dnp3_ht_item_t *dnp3_item)
+{
+	int ret = TM_ECODE_OK;
+
+	if (HashTableLookup(ht, dnp3_item, 0) == NULL) {
+		if (HashTableAdd(ht, dnp3_item, 0) < 0) {
+			SCLogNotice("add DNP3 hashtable item error.\n");
+			ret = TM_ECODE_FAILED;
+			goto out;
+		}
+	} else {
+		SCLogNotice("Duplicate DNP3 hashtable item.\n");
+		free_dnp3_ht_item(dnp3_item);
+	}
+out:
+	return ret;
+}
 
 int init_dnp3_hashtable(HashTable **ht, uint32_t size)
 {
@@ -130,45 +175,114 @@ int init_dnp3_hashtable(HashTable **ht, uint32_t size)
         return TM_ECODE_FAILED;
 }
 
-dnp3_ht_item_t* alloc_dnp3_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
-	uint8_t funcode, uint8_t group, uint8_t variation, uint32_t index, uint32_t size)
-{
-	dnp3_ht_item_t *dnp3_item = NULL;
-
-	if ((dnp3_item = SCMalloc(sizeof(dnp3_ht_item_t))) == NULL) {
-		goto out;
-	}
-	dnp3_item->sip = sip;
-	dnp3_item->dip = dip;
-	dnp3_item->proto = proto;
-	dnp3_item->funcode = funcode;
-	dnp3_item->group = group;
-	dnp3_item->variation = variation;
-	dnp3_item->index = index;
-	dnp3_item->size = size;
-out:
-	return dnp3_item;
-}
-
-void free_dnp3_ht_item(dnp3_ht_item_t *dnp3_item)
-{
-	if (dnp3_item)
-		SCFree(dnp3_item);
-	return;
-}
-
-int add_dnp3_ht_item(HashTable *ht, dnp3_ht_item_t *dnp3_item)
-{
-	return 0;
-}
-
-int match_dnp3_ht_item(HashTable *ht, dnp3_ht_item_t *dnp3_item)
-{
-	return 0;
-}
-
 int create_dnp3_hashtable(HashTable *ht, intmax_t template_id)
 {
+	int status = 0, len;
+	dnp3_ht_item_t *dnp3_item = NULL;
+	sql_handle handle = NULL;
+	char query[SQL_QUERY_SIZE] = {0};
+	MYSQL_RES *results=NULL;
+	MYSQL_ROW record;
+	uint32_t sip, dip, index, size;
+	uint8_t proto, funcode, group, variation;
+
+	if ((handle = sql_db_connect(DB_NAME)) == NULL) {
+		SCLogNotice("connect database study_modbus_table error.\n");
+		goto out;
+	}
+	len = snprintf(query, sizeof(query), "select src_ip,dst_ip,proto,funcode,groups,variation,indexes,size from study_dnp3_table where template_id='%ld';", template_id);
+
+	status = sql_real_query(handle, query, len);
+	if (status != 0) {
+		SCLogNotice("query modbus whitelist with template_id %ld error.\n", template_id);
+		goto out;
+	}
+	results = mysql_use_result(handle);
+	if (results == NULL) {
+		SCLogNotice("get modbus whitelist with template_id %ld error.\n", template_id);
+		goto out;
+	}
+	while((record = mysql_fetch_row(results))) {
+		sip = strtoul(record[0], NULL, 10);
+		dip = strtoul(record[1], NULL, 10);
+		proto = strtoul(record[2], NULL, 10);
+		funcode = strtoul(record[3], NULL, 10);
+		group = strtoul(record[4], NULL, 10);
+		variation = strtoul(record[5], NULL, 10);
+		index = strtoul(record[6], NULL, 10);
+		size = strtoul(record[7], NULL, 10);
+		if ((dnp3_item = alloc_dnp3_ht_item(sip, dip, proto, funcode, group, variation, index, size)) == NULL) {
+			SCLogNotice("Alloc DNP3 Item error.\n");
+			goto out;
+		}
+		if (add_dnp3_ht_item(ht, dnp3_item) != TM_ECODE_OK) {
+			SCLogNotice("Insert DNP3 Item to HashTable error.\n");
+			goto out;
+		}
+		SCLogNotice("sip = %u, dip = %u, proto = %u, funcode = %u, group = %u, variation = %u, index = %u, size = %u\n",
+			sip, dip, proto, funcode, group, variation, index, size);
+	}
+out:
+	if (handle)
+		sql_db_disconnect(handle);
 	return 0;
+}
+
+static int __match_dnp3_ht_item(HashTable *ht, uint32_t sip, uint32_t dip, uint8_t proto,
+	uint8_t funcode, uint8_t group, uint8_t variation, uint32_t index, uint32_t size)
+{
+	int matched = 0;
+	dnp3_ht_item_t *dnp3_item = NULL;
+
+	if ((dnp3_item = alloc_dnp3_ht_item(sip, dip, proto, funcode, group, variation, index, size)) == NULL) {
+		goto out;
+	}
+	if (HashTableLookup(ht, dnp3_item, 0) == NULL) {
+		goto out;
+	} else {
+		matched = 1;
+	}
+out:
+	if (dnp3_item) {
+		free_dnp3_ht_item(dnp3_item);
+	}
+	return matched;
+
+}
+
+int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3)
+{
+	int matched = 0;
+	uint32_t sip, dip, index, size;
+	uint8_t proto, funcode, group, variation;
+
+	sip = GET_IPV4_SRC_ADDR_U32(p);
+	dip = GET_IPV4_DST_ADDR_U32(p);
+	proto = IP_GET_IPPROTO(p);
+	funcode = dnp3->function_code;
+	for (uint32_t i = 0; i < dnp3->object_count; i++) {
+		group = dnp3->objects[i].group;
+		variation = dnp3->objects[i].variation;
+		if (dnp3->objects[i].point_count > 0) {
+			for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
+				index = dnp3->objects[i].points[j].index;
+				size = dnp3->objects[i].points[j].size;
+				if (__match_dnp3_ht_item(ht, sip, dip, proto, funcode, group, variation, index, size) == 0) {
+					matched = 0;
+					goto out;
+				}
+			}
+		} else {
+			index = 0;
+			size = 0;
+			if (__match_dnp3_ht_item(ht, sip, dip, proto, funcode, group, variation, index, size) == 0) {
+				matched = 0;
+				goto out;
+			}
+		}
+	}
+	matched = 1;
+out:
+	return matched;
 }
 

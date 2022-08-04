@@ -270,8 +270,7 @@ int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus)
 	}
 	if (HashTableLookup(ht, modbus_item, 0) == NULL) {
 		goto out;
-	}
-	else {
+	} else {
 		if (funcode == 23) {
 			modbus_item->address = address2;
 			modbus_item->quantity = quantity2;

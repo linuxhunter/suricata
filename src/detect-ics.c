@@ -154,6 +154,10 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 			ret = detect_get_dnp3_adu(p->flow, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX]);
 			if (ret != TM_ECODE_OK)
 				goto out;
+			if (global_ics_work_mode == ICS_MODE_WARNING) {
+				if (match_dnp3_ht_item(global_ics_hashtables[DNP3].hashtable, p, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX]) == 0)
+					ics_adu->invalid = 1;
+			}
 			break;
 		default:
 			ret = TM_ECODE_FAILED;
