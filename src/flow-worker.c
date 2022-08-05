@@ -577,7 +577,7 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
         DEBUG_ASSERT_FLOW_LOCKED(p->flow);
 
         /* Release ICS ADU Data */
-        detect_free_ics_adu(p->flow->ics_adu, p->flow->alproto);
+        detect_free_ics_adu(p->flow, p->flow->alproto);
 
         if (FlowIsBypassed(p->flow)) {
             FlowCleanupAppLayer(p->flow);

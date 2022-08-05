@@ -19,14 +19,12 @@ typedef enum {
 	ICS_PROTO_MAX,
 } ics_proto_t;
 
-#define ICS_ADU_REAL_INDEX		0
-#define ICS_ADU_TEMPLATE_INDEX	1
-#define ICS_ADU_INDEX_MAX		2
+#define ICS_ADU_WARNING_INVALID_FLAG	0x01
 typedef struct {
 	ics_mode_t work_mode;
 	enum AppProtoEnum proto;
 	uint32_t template_id;
-	uint32_t invalid;
+	uint32_t flags;
 	union {
 		ics_modbus_t *modbus;
 		ics_dnp3_t *dnp3;
@@ -40,7 +38,7 @@ typedef struct {
 } ics_hashtable_t;
 
 void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intmax_t template_id);
-void detect_free_ics_adu(ics_adu_t *ics_adu, enum AppProtoEnum proto);
+void detect_free_ics_adu(Flow *p, enum AppProtoEnum proto);
 int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu);
 TmEcode detect_ics_adu(ThreadVars *tv, Packet *p);
 int ParseICSControllerSettings(void);

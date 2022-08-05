@@ -90,18 +90,18 @@ void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intma
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
 			{
-				ics_adu->u.modbus = SCMalloc(sizeof(ics_modbus_t)*ICS_ADU_INDEX_MAX);
+				ics_adu->u.modbus = SCMalloc(sizeof(ics_modbus_t));
 				if (ics_adu->u.modbus == NULL)
 					goto error;
-				memset(ics_adu->u.modbus, 0x00, sizeof(ics_modbus_t)*ICS_ADU_INDEX_MAX);
+				memset(ics_adu->u.modbus, 0x00, sizeof(ics_modbus_t));
 			}
 			break;
 		case ALPROTO_DNP3:
 			{
-				ics_adu->u.dnp3 = SCMalloc(sizeof(ics_dnp3_t)*ICS_ADU_INDEX_MAX);
+				ics_adu->u.dnp3 = SCMalloc(sizeof(ics_dnp3_t));
 				if (ics_adu->u.dnp3 == NULL)
 					goto error;
-				memset(ics_adu->u.dnp3, 0x00, sizeof(ics_dnp3_t)*ICS_ADU_INDEX_MAX);
+				memset(ics_adu->u.dnp3, 0x00, sizeof(ics_dnp3_t));
 			}
 			break;
 		default:
@@ -116,22 +116,29 @@ error:
 	return NULL;
 }
 
-void detect_free_ics_adu(ics_adu_t *ics_adu, enum AppProtoEnum proto)
+void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 {
+	ics_adu_t *ics_adu = (ics_adu_t *)f->ics_adu;
 	if (ics_adu == NULL)
 		goto out;
 	switch(proto) {
 		case ALPROTO_MODBUS:
-			if (ics_adu->u.modbus != NULL)
+			if (ics_adu->u.modbus != NULL) {
 				SCFree(ics_adu->u.modbus);
+				ics_adu->u.modbus = NULL;
+			}
 			break;
 		case ALPROTO_DNP3:
-			if (ics_adu->u.dnp3 != NULL)
+			if (ics_adu->u.dnp3 != NULL) {
 				SCFree(ics_adu->u.dnp3);
+				ics_adu->u.dnp3 = NULL;
+			}
 			break;
 		default:
 			break;
 	}
+	SCFree(f->ics_adu);
+	f->ics_adu = NULL;
 out:
 	return;
 }
@@ -142,21 +149,21 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
-			ret = detect_get_modbus_adu(p->flow, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX]);
+			ret = detect_get_modbus_adu(p->flow, ics_adu->u.modbus);
 			if (ret != TM_ECODE_OK)
 				goto out;
 			if (global_ics_work_mode == ICS_MODE_WARNING) {
-				if (match_modbus_ht_item(global_ics_hashtables[MODBUS].hashtable, p, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX]) == 0)
-					ics_adu->invalid = 1;
+				if (match_modbus_ht_item(global_ics_hashtables[MODBUS].hashtable, p, ics_adu->u.modbus) == 0)
+					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
 		case ALPROTO_DNP3:
-			ret = detect_get_dnp3_adu(p->flow, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX]);
+			ret = detect_get_dnp3_adu(p->flow, ics_adu->u.dnp3);
 			if (ret != TM_ECODE_OK)
 				goto out;
 			if (global_ics_work_mode == ICS_MODE_WARNING) {
-				if (match_dnp3_ht_item(global_ics_hashtables[DNP3].hashtable, p, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX]) == 0)
-					ics_adu->invalid = 1;
+				if (match_dnp3_ht_item(global_ics_hashtables[DNP3].hashtable, p, ics_adu->u.dnp3) == 0)
+					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
 		default:
@@ -171,29 +178,25 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 {
 	ics_adu_t *ics_adu = NULL;
 
-	if (p->flow) {
-		p->flow->ics_adu = NULL;
+	if (p->flow && (p->flowflags & FLOW_PKT_TOSERVER)) {
 		if (p->flow->alproto == ALPROTO_MODBUS ||
 			p->flow->alproto == ALPROTO_DNP3) {
-			if (p->flowflags & FLOW_PKT_TOSERVER) {
-				ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_id);
-				if (ics_adu == NULL) {
-					SCLogNotice("create modbus adu error.\n");
-					goto error;
-				}
-				if (detect_get_ics_adu(p, ics_adu) != TM_ECODE_OK) {
-					SCLogNotice("get modbus adu error.\n");
-					goto error;
-				}
-				p->flow->ics_adu = (void *)ics_adu;
+			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_id);
+			if (ics_adu == NULL) {
+				SCLogNotice("create modbus adu error.\n");
+				goto error;
 			}
+			if (detect_get_ics_adu(p, ics_adu) != TM_ECODE_OK) {
+				SCLogNotice("get modbus adu error.\n");
+				goto error;
+			}
+			p->flow->ics_adu = (void *)ics_adu;
 		}
 	}
 	return TM_ECODE_OK;
 error:
-	p->flow->ics_adu = NULL;
 	if (ics_adu)
-		detect_free_ics_adu(ics_adu, p->flow->alproto);
+		detect_free_ics_adu(p->flow, p->flow->alproto);
 	return TM_ECODE_FAILED;
 }
 

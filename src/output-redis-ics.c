@@ -370,20 +370,20 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 	ics_adu = p->flow->ics_adu;
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
-			ret = create_modbus_audit_data(p, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX], &audit_data, &audit_data_len);
+			ret = create_modbus_audit_data(p, ics_adu->u.modbus, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			switch(ics_adu->work_mode) {
 				case ICS_MODE_STUDY:
-					ret = create_modbus_study_data(p, ics_adu->template_id, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX], &study_data, &study_data_len);
+					ret = create_modbus_study_data(p, ics_adu->template_id, ics_adu->u.modbus, &study_data, &study_data_len);
 					if (ret != TM_ECODE_OK)
 						goto out;
 					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
 					break;
 				case ICS_MODE_WARNING:
-					if (ics_adu->invalid) {
-						ret = create_modbus_warning_data(p, ics_adu->template_id, &ics_adu->u.modbus[ICS_ADU_REAL_INDEX], &warning_data, &warning_data_len);
+					if (ics_adu->flags & ICS_ADU_WARNING_INVALID_FLAG) {
+						ret = create_modbus_warning_data(p, ics_adu->template_id, ics_adu->u.modbus, &warning_data, &warning_data_len);
 						if (ret != TM_ECODE_OK)
 							goto out;
 						ICSSendRedisLog(c, ICS_MODE_WARNING, warning_data, warning_data_len);
@@ -394,19 +394,19 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			}
 			break;
 		case ALPROTO_DNP3:
-			ret = create_dnp3_audit_data(p, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX], &audit_data, &audit_data_len);
+			ret = create_dnp3_audit_data(p, ics_adu->u.dnp3, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			switch(ics_adu->work_mode) {
 				case ICS_MODE_STUDY:
-					ret = create_dnp3_study_data(p, ics_adu->template_id, &ics_adu->u.dnp3[ICS_ADU_REAL_INDEX], &study_data, &study_data_len);
+					ret = create_dnp3_study_data(p, ics_adu->template_id, ics_adu->u.dnp3, &study_data, &study_data_len);
 					if (ret != TM_ECODE_OK)
 						goto out;
 					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
 					break;
 				case ICS_MODE_WARNING:
-					if (ics_adu->invalid) {
+					if (ics_adu->flags & ICS_ADU_WARNING_INVALID_FLAG) {
 						ret = create_dnp3_warning_data(p, ics_adu->template_id, ics_adu->u.dnp3, &warning_data, &warning_data_len);
 						if (ret != TM_ECODE_OK)
 							goto out;
