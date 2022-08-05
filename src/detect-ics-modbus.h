@@ -47,6 +47,6 @@ typedef struct {
 int detect_get_modbus_adu(Flow *p, ics_modbus_t *ics_modbus);
 int init_modbus_hashtable(HashTable **ht, uint32_t size);
 int create_modbus_hashtable(HashTable *ht, intmax_t template_id);
-int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus);
+int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus, modbus_ht_item_t *warning_data);
 
 #endif

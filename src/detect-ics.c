@@ -71,21 +71,22 @@ static void free_ics_hashtables(void)
 	}
 }
 
-void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intmax_t template_id)
+void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 {
 	ics_adu_t *ics_adu = SCMalloc(sizeof(ics_adu_t));
 
 	if (ics_adu == NULL)
 		goto error;
 
+	f->ics_adu = ics_adu;
 	memset(ics_adu, 0x00, sizeof(ics_adu_t));
 	if (work_mode <= ICS_MODE_MIN || work_mode >= ICS_MODE_MAX)
 		goto error;
-	if (proto != ALPROTO_MODBUS &&
-		proto != ALPROTO_DNP3)
+	if (f->alproto != ALPROTO_MODBUS &&
+		f->alproto != ALPROTO_DNP3)
 		goto error;
 	ics_adu->work_mode = work_mode;
-	ics_adu->proto = proto;
+	ics_adu->proto = f->alproto;
 	ics_adu->template_id = template_id;
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
@@ -94,6 +95,12 @@ void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intma
 				if (ics_adu->u.modbus == NULL)
 					goto error;
 				memset(ics_adu->u.modbus, 0x00, sizeof(ics_modbus_t));
+				if (work_mode == ICS_MODE_WARNING) {
+					ics_adu->warning.modbus = SCMalloc(sizeof(modbus_ht_item_t));
+					if (ics_adu->warning.modbus == NULL)
+						goto error;
+					memset(ics_adu->warning.modbus, 0x00, sizeof(modbus_ht_item_t));
+				}
 			}
 			break;
 		case ALPROTO_DNP3:
@@ -102,6 +109,12 @@ void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intma
 				if (ics_adu->u.dnp3 == NULL)
 					goto error;
 				memset(ics_adu->u.dnp3, 0x00, sizeof(ics_dnp3_t));
+				if (work_mode == ICS_MODE_WARNING) {
+					ics_adu->warning.dnp3 = SCMalloc(sizeof(dnp3_ht_item_t));
+					if (ics_adu->warning.dnp3 == NULL)
+						goto error;
+					memset(ics_adu->warning.dnp3, 0x00, sizeof(dnp3_ht_item_t));
+				}
 			}
 			break;
 		default:
@@ -110,7 +123,7 @@ void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intma
 	return ics_adu;
 error:
 	if (ics_adu) {
-		SCFree(ics_adu);
+		detect_free_ics_adu(f, f->alproto);
 		ics_adu = NULL;
 	}
 	return NULL;
@@ -127,11 +140,19 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 				SCFree(ics_adu->u.modbus);
 				ics_adu->u.modbus = NULL;
 			}
+			if (global_ics_work_mode == ICS_MODE_WARNING && ics_adu->warning.modbus != NULL) {
+				SCFree(ics_adu->warning.modbus);
+				ics_adu->warning.modbus = NULL;
+			}
 			break;
 		case ALPROTO_DNP3:
 			if (ics_adu->u.dnp3 != NULL) {
 				SCFree(ics_adu->u.dnp3);
 				ics_adu->u.dnp3 = NULL;
+			}
+			if (global_ics_work_mode == ICS_MODE_WARNING && ics_adu->warning.dnp3 != NULL) {
+				SCFree(ics_adu->warning.dnp3);
+				ics_adu->warning.dnp3 = NULL;
 			}
 			break;
 		default:
@@ -153,7 +174,7 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 			if (ret != TM_ECODE_OK)
 				goto out;
 			if (global_ics_work_mode == ICS_MODE_WARNING) {
-				if (match_modbus_ht_item(global_ics_hashtables[MODBUS].hashtable, p, ics_adu->u.modbus) == 0)
+				if (match_modbus_ht_item(global_ics_hashtables[MODBUS].hashtable, p, ics_adu->u.modbus, ics_adu->warning.modbus) == 0)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
@@ -162,7 +183,7 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 			if (ret != TM_ECODE_OK)
 				goto out;
 			if (global_ics_work_mode == ICS_MODE_WARNING) {
-				if (match_dnp3_ht_item(global_ics_hashtables[DNP3].hashtable, p, ics_adu->u.dnp3) == 0)
+				if (match_dnp3_ht_item(global_ics_hashtables[DNP3].hashtable, p, ics_adu->u.dnp3, ics_adu->warning.dnp3) == 0)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
@@ -181,7 +202,7 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 	if (p->flow && (p->flowflags & FLOW_PKT_TOSERVER)) {
 		if (p->flow->alproto == ALPROTO_MODBUS ||
 			p->flow->alproto == ALPROTO_DNP3) {
-			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow->alproto, global_ics_template_id);
+			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow, global_ics_template_id);
 			if (ics_adu == NULL) {
 				SCLogNotice("create modbus adu error.\n");
 				goto error;

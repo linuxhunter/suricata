@@ -29,6 +29,10 @@ typedef struct {
 		ics_modbus_t *modbus;
 		ics_dnp3_t *dnp3;
 	}u;
+	union {
+		modbus_ht_item_t *modbus;
+		dnp3_ht_item_t *dnp3;
+	}warning;
 } ics_adu_t;
 
 #define ICS_HASHTABLE_SIZE	8192
@@ -37,7 +41,7 @@ typedef struct {
 	HashTable *hashtable;
 } ics_hashtable_t;
 
-void* detect_create_ics_adu(ics_mode_t work_mode, enum AppProtoEnum proto, intmax_t template_id);
+void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id);
 void detect_free_ics_adu(Flow *p, enum AppProtoEnum proto);
 int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu);
 TmEcode detect_ics_adu(ThreadVars *tv, Packet *p);

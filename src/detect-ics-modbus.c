@@ -223,7 +223,7 @@ out:
     return 0;
 }
 
-int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus)
+int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus, modbus_ht_item_t *warning_data)
 {
 	int matched = 0;
 	uint32_t sip, dip;
@@ -263,18 +263,22 @@ int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus)
 			quantity2 = modbus->u.rw_addr_quan.write_quantity;
 			break;
 		default:
+			matched = 1;
 			goto out;
 	}
 	if ((modbus_item = alloc_modbus_ht_item(sip, dip, proto, funcode, address, quantity)) == NULL) {
+		matched = 1;
 		goto out;
 	}
 	if (HashTableLookup(ht, modbus_item, 0) == NULL) {
+		memcpy(warning_data, modbus_item, sizeof(modbus_ht_item_t));
 		goto out;
 	} else {
 		if (funcode == 23) {
 			modbus_item->address = address2;
 			modbus_item->quantity = quantity2;
 			if (HashTableLookup(ht, modbus_item, 0) == NULL) {
+				memcpy(warning_data, modbus_item, sizeof(modbus_ht_item_t));
 				goto out;
 			} else
 				matched = 1;

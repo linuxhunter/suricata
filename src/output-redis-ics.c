@@ -202,6 +202,44 @@ out:
 	return ret;
 }
 
+static int serialize_warning_modbus_data(const Packet *p, int template_id, modbus_ht_item_t *modbus, uint8_t **warning_data, int *warning_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *warning_data_ptr = NULL;
+
+	box = tlv_box_create();
+	tlv_box_put_int(box, BEGIN, 0);
+	tlv_box_put_int(box, TEMPLATE_ID, template_id);
+	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
+	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
+	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	tlv_box_put_uchar(box, APP_PROTO, MODBUS);
+	tlv_box_put_uchar(box, MODBUS_FUNCODE, modbus->funcode);
+	tlv_box_put_ushort(box, MODBUS_RADDR, modbus->address);
+	tlv_box_put_ushort(box, MODBUS_RQUANTITY, modbus->quantity);
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*warning_data_len = tlv_box_get_size(box);
+	if ((*warning_data = SCMalloc(*warning_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*warning_data, 0x00, *warning_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*warning_data), *warning_data_len, "%d:", *warning_data_len);
+	warning_data_ptr = (uint8_t *)strchr((char *)(*warning_data), ':');
+	warning_data_ptr++;
+	memcpy(warning_data_ptr, tlv_box_get_buffer(box), *warning_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 #define DNP3_OBJECT_BUFFER_LENGTH	1024
 static int serialize_audit_dnp3_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **audit_data, int *audit_data_len)
 {
@@ -326,6 +364,46 @@ out:
 	return ret;
 }
 
+static int serialize_warning_dnp3_data(const Packet *p, int template_id, dnp3_ht_item_t *dnp3, uint8_t **warning_data, int *warning_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *warning_data_ptr = NULL;
+
+	box = tlv_box_create();
+	tlv_box_put_int(box, BEGIN, 0);
+	tlv_box_put_int(box, TEMPLATE_ID, template_id);
+	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
+	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
+	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	tlv_box_put_uchar(box, APP_PROTO, DNP3);
+	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->funcode);
+	tlv_box_put_uchar(box, DNP3_GROUP, dnp3->group);
+	tlv_box_put_uchar(box, DNP3_VARIATION, dnp3->variation);
+	tlv_box_put_uint(box, DNP3_INDEX, dnp3->index);
+	tlv_box_put_uint(box, DNP3_SIZE, dnp3->size);
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*warning_data_len = tlv_box_get_size(box);
+	if ((*warning_data = SCMalloc(*warning_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*warning_data, 0x00, *warning_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*warning_data), *warning_data_len, "%d:", *warning_data_len);
+	warning_data_ptr = (uint8_t *)strchr((char *)(*warning_data), ':');
+	warning_data_ptr++;
+	memcpy(warning_data_ptr, tlv_box_get_buffer(box), *warning_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
@@ -336,9 +414,9 @@ static int create_modbus_study_data(const Packet *p, int template_id, ics_modbus
 	return serialize_study_modbus_data(p, template_id, modbus, study_data, study_data_len);
 }
 
-static int create_modbus_warning_data(const Packet *p, int template_id, ics_modbus_t *modbus, uint8_t **warning_data, int *warning_data_len)
+static int create_modbus_warning_data(const Packet *p, int template_id, modbus_ht_item_t *modbus, uint8_t **warning_data, int *warning_data_len)
 {
-	return serialize_study_modbus_data(p, template_id, modbus, warning_data, warning_data_len);
+	return serialize_warning_modbus_data(p, template_id, modbus, warning_data, warning_data_len);
 }
 
 static int create_dnp3_audit_data(const Packet *p, ics_dnp3_t *dnp3, uint8_t **audit_data, int *audit_data_len)
@@ -351,9 +429,9 @@ static int create_dnp3_study_data(const Packet *p, int template_id, ics_dnp3_t *
 	return serialize_study_dnp3_data(p, template_id, dnp3, study_data, study_data_len);
 }
 
-static int create_dnp3_warning_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **warning_data, int *warning_data_len)
+static int create_dnp3_warning_data(const Packet *p, int template_id, dnp3_ht_item_t *dnp3, uint8_t **warning_data, int *warning_data_len)
 {
-	return serialize_study_dnp3_data(p, template_id, dnp3, warning_data, warning_data_len);
+	return serialize_warning_dnp3_data(p, template_id, dnp3, warning_data, warning_data_len);
 }
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
@@ -383,7 +461,7 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 					break;
 				case ICS_MODE_WARNING:
 					if (ics_adu->flags & ICS_ADU_WARNING_INVALID_FLAG) {
-						ret = create_modbus_warning_data(p, ics_adu->template_id, ics_adu->u.modbus, &warning_data, &warning_data_len);
+						ret = create_modbus_warning_data(p, ics_adu->template_id, ics_adu->warning.modbus, &warning_data, &warning_data_len);
 						if (ret != TM_ECODE_OK)
 							goto out;
 						ICSSendRedisLog(c, ICS_MODE_WARNING, warning_data, warning_data_len);
@@ -407,7 +485,7 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 					break;
 				case ICS_MODE_WARNING:
 					if (ics_adu->flags & ICS_ADU_WARNING_INVALID_FLAG) {
-						ret = create_dnp3_warning_data(p, ics_adu->template_id, ics_adu->u.dnp3, &warning_data, &warning_data_len);
+						ret = create_dnp3_warning_data(p, ics_adu->template_id, ics_adu->warning.dnp3, &warning_data, &warning_data_len);
 						if (ret != TM_ECODE_OK)
 							goto out;
 						ICSSendRedisLog(c, ICS_MODE_WARNING, warning_data, warning_data_len);

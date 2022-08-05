@@ -228,33 +228,24 @@ out:
 	return 0;
 }
 
-static int __match_dnp3_ht_item(HashTable *ht, uint32_t sip, uint32_t dip, uint8_t proto,
-	uint8_t funcode, uint8_t group, uint8_t variation, uint32_t index, uint32_t size)
+static int __match_dnp3_ht_item(HashTable *ht, dnp3_ht_item_t *dnp3_item)
 {
 	int matched = 0;
-	dnp3_ht_item_t *dnp3_item = NULL;
 
-	if ((dnp3_item = alloc_dnp3_ht_item(sip, dip, proto, funcode, group, variation, index, size)) == NULL) {
-		goto out;
-	}
 	if (HashTableLookup(ht, dnp3_item, 0) == NULL) {
-		goto out;
+		matched = 0;
 	} else {
 		matched = 1;
 	}
-out:
-	if (dnp3_item) {
-		free_dnp3_ht_item(dnp3_item);
-	}
 	return matched;
-
 }
 
-int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3)
+int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3, dnp3_ht_item_t *warning_data)
 {
 	int matched = 0;
 	uint32_t sip, dip, index, size;
 	uint8_t proto, funcode, group, variation;
+	dnp3_ht_item_t *dnp3_item = NULL;
 
 	sip = GET_IPV4_SRC_ADDR_U32(p);
 	dip = GET_IPV4_DST_ADDR_U32(p);
@@ -267,22 +258,33 @@ int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3)
 			for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
 				index = dnp3->objects[i].points[j].index;
 				size = dnp3->objects[i].points[j].size;
-				if (__match_dnp3_ht_item(ht, sip, dip, proto, funcode, group, variation, index, size) == 0) {
-					matched = 0;
+				if ((dnp3_item = alloc_dnp3_ht_item(sip, dip, proto, funcode, group, variation, index, size)) == NULL) {
+					matched = 1;
+					goto out;
+				}
+				if (__match_dnp3_ht_item(ht, dnp3_item) == 0) {
+					memcpy(warning_data, dnp3_item, sizeof(dnp3_ht_item_t));
 					goto out;
 				}
 			}
 		} else {
 			index = 0;
 			size = 0;
-			if (__match_dnp3_ht_item(ht, sip, dip, proto, funcode, group, variation, index, size) == 0) {
-				matched = 0;
+			if ((dnp3_item = alloc_dnp3_ht_item(sip, dip, proto, funcode, group, variation, index, size)) == NULL) {
+				matched = 1;
+				goto out;
+			}
+			if (__match_dnp3_ht_item(ht, dnp3_item) == 0) {
+				memcpy(warning_data, dnp3_item, sizeof(dnp3_ht_item_t));
 				goto out;
 			}
 		}
 	}
 	matched = 1;
 out:
+	if (dnp3_item) {
+		free_dnp3_ht_item(dnp3_item);
+	}
 	return matched;
 }
 
