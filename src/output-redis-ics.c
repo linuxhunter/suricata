@@ -57,20 +57,75 @@ out:
 	return ret;
 }
 
-static int serialize_audit_modbus_data(const Packet *p, int template_id, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
+static tlv_box_t* serialize_audit_common_data(const Packet *p, int template_id)
 {
-	int ret = TM_ECODE_OK;
 	tlv_box_t *box = NULL;
-	uint8_t *audit_data_ptr = NULL;
+	char eth_addr[19] = {0};
+
+	box = tlv_box_create();
+	tlv_box_put_int(box, BEGIN, 0);
+	tlv_box_put_int(box, TEMPLATE_ID, template_id);
+	if (p->ethh != NULL) {
+		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+			p->ethh->eth_src[0], p->ethh->eth_src[1],
+			p->ethh->eth_src[2], p->ethh->eth_src[3],
+			p->ethh->eth_src[4], p->ethh->eth_src[5]);
+		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+			p->ethh->eth_dst[0], p->ethh->eth_dst[1],
+			p->ethh->eth_dst[2], p->ethh->eth_dst[3],
+			p->ethh->eth_dst[4], p->ethh->eth_dst[5]);
+	} else {
+		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+			0, 0, 0, 0, 0, 0);
+		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+			0, 0, 0, 0, 0, 0);
+	}
+	tlv_box_put_string(box, SRC_MAC, eth_addr);
+	tlv_box_put_string(box, DST_MAC, eth_addr);
+	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
+	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
+	tlv_box_put_ushort(box, SRC_PORT, GET_TCP_SRC_PORT(p));
+	tlv_box_put_ushort(box, DST_PORT, GET_TCP_DST_PORT(p));
+	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	tlv_box_put_uint(box, FLOW_HASH, p->flow_hash);
+	tlv_box_put_uint(box, PKTLEN, p->pktlen);
+	tlv_box_put_ushort(box, PAYLOAD_LEN, p->payload_len);
+	return box;
+}
+
+static tlv_box_t* serialize_study_common_data(const Packet *p, int template_id)
+{
+	tlv_box_t *box = NULL;
 
 	box = tlv_box_create();
 	tlv_box_put_int(box, BEGIN, 0);
 	tlv_box_put_int(box, TEMPLATE_ID, template_id);
 	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
 	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
-	tlv_box_put_ushort(box, SRC_PORT, GET_TCP_SRC_PORT(p));
-	tlv_box_put_ushort(box, DST_PORT, GET_TCP_DST_PORT(p));
 	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	return box;
+}
+
+static tlv_box_t* serialize_warning_common_data(const Packet *p, int template_id)
+{
+	tlv_box_t *box = NULL;
+
+	box = tlv_box_create();
+	tlv_box_put_int(box, BEGIN, 0);
+	tlv_box_put_int(box, TEMPLATE_ID, template_id);
+	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
+	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
+	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	return box;
+}
+
+static int serialize_audit_modbus_data(const Packet *p, int template_id, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *audit_data_ptr = NULL;
+
+	box = serialize_audit_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, MODBUS);
 	tlv_box_put_uchar(box, MODBUS_FUNCODE, modbus->funcode);
 	switch(modbus->funcode) {
@@ -142,12 +197,7 @@ static int serialize_study_modbus_data(const Packet *p, int template_id, ics_mod
 	tlv_box_t *box = NULL;
 	uint8_t *study_data_ptr = NULL;
 
-	box = tlv_box_create();
-	tlv_box_put_int(box, BEGIN, 0);
-	tlv_box_put_int(box, TEMPLATE_ID, template_id);
-	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
-	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
-	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	box = serialize_study_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, MODBUS);
 	tlv_box_put_uchar(box, MODBUS_FUNCODE, modbus->funcode);
 	switch(modbus->funcode) {
@@ -208,12 +258,7 @@ static int serialize_warning_modbus_data(const Packet *p, int template_id, modbu
 	tlv_box_t *box = NULL;
 	uint8_t *warning_data_ptr = NULL;
 
-	box = tlv_box_create();
-	tlv_box_put_int(box, BEGIN, 0);
-	tlv_box_put_int(box, TEMPLATE_ID, template_id);
-	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
-	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
-	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	box = serialize_warning_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, MODBUS);
 	tlv_box_put_uchar(box, MODBUS_FUNCODE, modbus->funcode);
 	tlv_box_put_ushort(box, MODBUS_RADDR, modbus->address);
@@ -248,13 +293,7 @@ static int serialize_audit_dnp3_data(const Packet *p, int template_id, ics_dnp3_
 	uint8_t *audit_data_ptr = NULL;
 	MemBuffer *dnp3_object_buffer = NULL;
 
-	box = tlv_box_create();
-	tlv_box_put_int(box, BEGIN, 0);
-	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
-	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
-	tlv_box_put_ushort(box, SRC_PORT, GET_TCP_SRC_PORT(p));
-	tlv_box_put_ushort(box, DST_PORT, GET_TCP_DST_PORT(p));
-	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	box = serialize_audit_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
 	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->function_code);
 	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->object_count);
@@ -310,12 +349,7 @@ static int serialize_study_dnp3_data(const Packet *p, int template_id, ics_dnp3_
 	uint8_t *study_data_ptr = NULL;
 	MemBuffer *dnp3_object_buffer = NULL;
 
-	box = tlv_box_create();
-	tlv_box_put_int(box, BEGIN, 0);
-	tlv_box_put_int(box, TEMPLATE_ID, template_id);
-	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
-	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
-	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	box = serialize_study_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
 	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->function_code);
 	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->object_count);
@@ -370,12 +404,7 @@ static int serialize_warning_dnp3_data(const Packet *p, int template_id, dnp3_ht
 	tlv_box_t *box = NULL;
 	uint8_t *warning_data_ptr = NULL;
 
-	box = tlv_box_create();
-	tlv_box_put_int(box, BEGIN, 0);
-	tlv_box_put_int(box, TEMPLATE_ID, template_id);
-	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
-	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
-	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
+	box = serialize_warning_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
 	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->funcode);
 	tlv_box_put_uchar(box, DNP3_GROUP, dnp3->group);
