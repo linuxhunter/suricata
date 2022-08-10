@@ -57,10 +57,29 @@ out:
 	return ret;
 }
 
+static inline uint32_t TluHash(uint32_t u1, uint32_t u2)
+{
+    uint32_t a,b,c;
+    a = u2 + 0x9e3779b9;
+    b = u1 + 0x9e3779b9;
+    c = 0;
+    a = a - b; a = a - c; a = a ^ (c >> 13);
+    b = b - c; b = b - a; b = b ^ (a << 8);
+    c = c - a; c = c - b; c = c ^ (b >> 13);
+    a = a - b; a = a - c; a = a ^ (c >> 12);
+    b = b - c; b = b - a; b = b ^ (a << 16);
+    c = c - a; c = c - b; c = c ^ (b >> 5);
+    a = a - b; a = a - c; a = a ^ (c >> 3);
+    b = b - c; b = b - a; b = b ^ (a << 10);
+    c = c - a; c = c - b; c = c ^ (b >> 15);
+    return (c);
+}
+
 static tlv_box_t* serialize_audit_common_data(const Packet *p, int template_id)
 {
 	tlv_box_t *box = NULL;
 	char eth_addr[19] = {0};
+	uint32_t flow_hash = 0;
 
 	box = tlv_box_create();
 	tlv_box_put_int(box, BEGIN, 0);
@@ -87,7 +106,10 @@ static tlv_box_t* serialize_audit_common_data(const Packet *p, int template_id)
 	tlv_box_put_ushort(box, SRC_PORT, GET_TCP_SRC_PORT(p));
 	tlv_box_put_ushort(box, DST_PORT, GET_TCP_DST_PORT(p));
 	tlv_box_put_uchar(box, PROTO, IP_GET_IPPROTO(p));
-	tlv_box_put_uint(box, FLOW_HASH, p->flow_hash);
+	flow_hash = TluHash(GET_IPV4_SRC_ADDR_U32(p), GET_IPV4_DST_ADDR_U32(p));
+	flow_hash ^= TluHash(GET_TCP_SRC_PORT(p), GET_TCP_DST_PORT(p));
+	flow_hash ^= TluHash(IP_GET_IPPROTO(p), 0xFFFFFFFF);
+	tlv_box_put_uint(box, FLOW_HASH, flow_hash);
 	tlv_box_put_uint(box, PKTLEN, p->pktlen);
 	tlv_box_put_ushort(box, PAYLOAD_LEN, p->payload_len);
 	return box;
