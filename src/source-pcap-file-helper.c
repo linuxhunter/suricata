@@ -24,6 +24,7 @@
  */
 
 #include "source-pcap-file-helper.h"
+#include "suricata.h"
 #include "util-datalink.h"
 #include "util-checksum.h"
 #include "util-profiling.h"

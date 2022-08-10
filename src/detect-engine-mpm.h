@@ -24,13 +24,9 @@
 #ifndef __DETECT_ENGINE_MPM_H__
 #define __DETECT_ENGINE_MPM_H__
 
-#include "tm-threads.h"
 
 #include "detect.h"
-#include "detect-content.h"
-#include "detect-uricontent.h"
 
-#include "stream.h"
 
 void DetectMpmInitializeFrameMpms(DetectEngineCtx *de_ctx);
 int DetectMpmPrepareFrameMpms(DetectEngineCtx *de_ctx);
@@ -70,7 +66,7 @@ void MpmStoreReportStats(const DetectEngineCtx *de_ctx);
 MpmStore *MpmStorePrepareBuffer(DetectEngineCtx *de_ctx, SigGroupHead *sgh, enum MpmBuiltinBuffers buf);
 
 /**
- * \brief Figured out the FP and their respective content ids for all the
+ * \brief Figure out the FP and their respective content ids for all the
  *        sigs in the engine.
  *
  * \param de_ctx Detection engine context.

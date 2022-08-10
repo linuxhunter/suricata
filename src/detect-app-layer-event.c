@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2020 Open Information Security Foundation
+/* Copyright (C) 2007-2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -33,6 +33,7 @@
 #include "detect-parse.h"
 #include "detect-engine.h"
 #include "detect-engine-state.h"
+#include "detect-engine-build.h"
 #include "detect-app-layer-event.h"
 
 #include "flow.h"
@@ -42,11 +43,23 @@
 #include "decode-events.h"
 #include "util-byte.h"
 #include "util-debug.h"
+#include "util-enum.h"
+#include "util-profiling.h"
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
 #include "stream-tcp-util.h"
 
 #define MAX_ALPROTO_NAME 50
+
+typedef struct DetectAppLayerEventData_ {
+    AppProto alproto;
+    uint8_t event_id;
+
+    /* it's used to check if there are event set into the detect engine */
+    bool needs_detctx;
+
+    char *arg;
+} DetectAppLayerEventData;
 
 static int DetectAppLayerEventPktMatch(DetectEngineThreadCtx *det_ctx,
                                        Packet *p, const Signature *s, const SigMatchCtx *ctx);

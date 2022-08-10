@@ -1906,6 +1906,12 @@
                 "sname": {
                     "type": "string"
                 },
+                "ticket_encryption": {
+                    "type": "string"
+                },
+                "ticket_weak_encryption": {
+                    "type": "boolean"
+                },
                 "weak_encryption": {
                     "type": "boolean"
                 }
@@ -2819,6 +2825,53 @@
                             "string": {
                                 "type": "string"
                             }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "extensions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "type": {
+                                "type": "integer"
+                            },
+                            "values": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "ja3": {
+                    "type": "object",
+                    "optional": true,
+                    "properties": {
+                        "hash": {
+                            "type": "string"
+                        },
+                        "string": {
+                            "type": "string"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "ja3s": {
+                    "type": "object",
+                    "optional": true,
+                    "properties": {
+                        "hash": {
+                            "type": "string"
+                        },
+                        "string": {
+                            "type": "string"
                         }
                     },
                     "additionalProperties": false

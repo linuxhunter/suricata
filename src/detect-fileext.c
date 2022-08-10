@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2012 Open Information Security Foundation
+/* Copyright (C) 2007-2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -30,6 +30,7 @@
 
 #include "detect.h"
 #include "detect-parse.h"
+#include "detect-content.h"
 
 #include "detect-engine.h"
 #include "detect-engine-mpm.h"
@@ -50,6 +51,12 @@
 
 #include "stream-tcp.h"
 #include "detect-fileext.h"
+
+typedef struct DetectFileextData_ {
+    uint8_t *ext; /** file extension to match */
+    uint16_t len; /** length of the file */
+    uint32_t flags;
+} DetectFileextData;
 
 static int DetectFileextMatch (DetectEngineThreadCtx *, Flow *,
         uint8_t, File *, const Signature *, const SigMatchCtx *);
@@ -199,16 +206,13 @@ error:
  */
 static int DetectFileextSetup (DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    DetectFileextData *fileext= NULL;
-    SigMatch *sm = NULL;
-
-    fileext = DetectFileextParse(de_ctx, str, s->init_data->negated);
+    DetectFileextData *fileext = DetectFileextParse(de_ctx, str, s->init_data->negated);
     if (fileext == NULL)
-        goto error;
+        return -1;
 
     /* Okay so far so good, lets get this into a SigMatch
      * and put it in the Signature. */
-    sm = SigMatchAlloc();
+    SigMatch *sm = SigMatchAlloc();
     if (sm == NULL)
         goto error;
 
@@ -221,12 +225,10 @@ static int DetectFileextSetup (DetectEngineCtx *de_ctx, Signature *s, const char
     return 0;
 
 error:
-    if (fileext != NULL)
-        DetectFileextFree(de_ctx, fileext);
+    DetectFileextFree(de_ctx, fileext);
     if (sm != NULL)
         SCFree(sm);
     return -1;
-
 }
 
 /**

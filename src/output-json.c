@@ -34,6 +34,9 @@
 #include "tm-threads.h"
 #include "threadvars.h"
 #include "util-debug.h"
+#include "util-time.h"
+#include "util-var-name.h"
+#include "util-macset.h"
 
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
@@ -45,6 +48,7 @@
 #include "app-layer-parser.h"
 #include "util-classification-config.h"
 #include "util-syslog.h"
+#include "output-eve-syslog.h"
 
 #include "output.h"
 #include "output-json.h"
@@ -128,11 +132,13 @@ void EveFileInfo(JsonBuilder *jb, const File *ff, const bool stored)
 {
     jb_set_string_from_bytes(jb, "filename", ff->name, ff->name_len);
 
-    jb_open_array(jb, "sid");
-    for (uint32_t i = 0; ff->sid != NULL && i < ff->sid_cnt; i++) {
-        jb_append_uint(jb, ff->sid[i]);
+    if (ff->sid_cnt > 0) {
+        jb_open_array(jb, "sid");
+        for (uint32_t i = 0; ff->sid != NULL && i < ff->sid_cnt; i++) {
+            jb_append_uint(jb, ff->sid[i]);
+        }
+        jb_close(jb);
     }
-    jb_close(jb);
 
 #ifdef HAVE_MAGIC
     if (ff->magic)

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 Open Information Security Foundation
+/* Copyright (C) 2007-2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -30,6 +30,7 @@
 
 #include "detect.h"
 #include "detect-parse.h"
+#include "detect-content.h"
 
 #include "detect-engine.h"
 #include "detect-engine-mpm.h"
@@ -53,6 +54,13 @@
 
 #include "detect-filename.h"
 #include "app-layer-parser.h"
+
+typedef struct DetectFilenameData {
+    uint8_t *name; /** name of the file to match */
+    BmCtx *bm_ctx; /** BM context */
+    uint16_t len;  /** name length */
+    uint32_t flags;
+} DetectFilenameData;
 
 static int DetectFilenameMatch (DetectEngineThreadCtx *, Flow *,
         uint8_t, File *, const Signature *, const SigMatchCtx *);
@@ -222,14 +230,9 @@ static int DetectFilenameMatch (DetectEngineThreadCtx *det_ctx,
  */
 static DetectFilenameData *DetectFilenameParse (DetectEngineCtx *de_ctx, const char *str, bool negate)
 {
-    DetectFilenameData *filename = NULL;
-
-    /* We have a correct filename option */
-    filename = SCMalloc(sizeof(DetectFilenameData));
+    DetectFilenameData *filename = SCCalloc(1, sizeof(DetectFilenameData));
     if (unlikely(filename == NULL))
-        goto error;
-
-    memset(filename, 0x00, sizeof(DetectFilenameData));
+        return NULL;
 
     if (DetectContentDataParse ("filename", str, &filename->name, &filename->len) == -1) {
         goto error;
@@ -264,8 +267,7 @@ static DetectFilenameData *DetectFilenameParse (DetectEngineCtx *de_ctx, const c
     return filename;
 
 error:
-    if (filename != NULL)
-        DetectFilenameFree(de_ctx, filename);
+    DetectFilenameFree(de_ctx, filename);
     return NULL;
 }
 

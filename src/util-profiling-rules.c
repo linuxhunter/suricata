@@ -35,6 +35,7 @@
 #include "util-byte.h"
 #include "util-profiling.h"
 #include "util-profiling-locks.h"
+#include "util-time.h"
 
 #ifdef PROFILING
 
@@ -54,7 +55,7 @@ typedef struct SCProfileData_ {
 
 typedef struct SCProfileDetectCtx_ {
     uint32_t size;
-    uint32_t id;
+    uint16_t id;
     SCProfileData *data;
     pthread_mutex_t data_m;
 } SCProfileDetectCtx;

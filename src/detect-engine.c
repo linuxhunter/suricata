@@ -39,6 +39,7 @@
 #include "detect-parse.h"
 #include "detect-engine-sigorder.h"
 
+#include "detect-engine-build.h"
 #include "detect-engine-siggroup.h"
 #include "detect-engine-address.h"
 #include "detect-engine-port.h"
@@ -46,6 +47,7 @@
 #include "detect-engine-mpm.h"
 #include "detect-engine-iponly.h"
 #include "detect-engine-tag.h"
+#include "detect-engine-frame.h"
 
 #include "detect-engine-file.h"
 
@@ -79,6 +81,7 @@
 #include "util-profiling.h"
 #include "util-validate.h"
 #include "util-hash-string.h"
+#include "util-enum.h"
 
 #include "tm-threads.h"
 #include "runmodes.h"
@@ -1946,10 +1949,11 @@ int DetectEngineReloadIsIdle(void)
  *  \retval 0 no match
  *  \retval 1 match
  */
-uint8_t DetectEngineInspectGenericList(const DetectEngineCtx *de_ctx,
-        DetectEngineThreadCtx *det_ctx, const Signature *s, const SigMatchData *smd, Flow *f,
-        const uint8_t flags, void *alstate, void *txv, uint64_t tx_id)
+uint8_t DetectEngineInspectGenericList(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
+        const struct DetectEngineAppInspectionEngine_ *engine, const Signature *s, Flow *f,
+        uint8_t flags, void *alstate, void *txv, uint64_t tx_id)
 {
+    SigMatchData *smd = engine->smd;
     SCLogDebug("running match functions, sm %p", smd);
     if (smd != NULL) {
         while (1) {
@@ -2365,14 +2369,17 @@ static DetectEngineCtx *DetectEngineCtxInitReal(enum DetectEngineType type, cons
     /* init iprep... ignore errors for now */
     (void)SRepInit(de_ctx);
 
-    SCClassConfLoadClassficationConfigFile(de_ctx, NULL);
-    if (SCRConfLoadReferenceConfigFile(de_ctx, NULL) < 0) {
+    if (!SCClassConfLoadClassficationConfigFile(de_ctx, NULL)) {
         if (RunmodeGetCurrent() == RUNMODE_CONF_TEST)
             goto error;
     }
 
     if (ActionInitConfig() < 0) {
         goto error;
+    }
+    if (SCRConfLoadReferenceConfigFile(de_ctx, NULL) < 0) {
+        if (RunmodeGetCurrent() == RUNMODE_CONF_TEST)
+            goto error;
     }
 
     de_ctx->version = DetectEngineGetVersion();
@@ -2773,8 +2780,10 @@ static int DetectEngineCtxLoadConf(DetectEngineCtx *de_ctx)
 
     }
     if (DetectPortParse(de_ctx, &de_ctx->udp_whitelist, ports) != 0) {
-        SCLogWarning(SC_ERR_INVALID_YAML_CONF_ENTRY, "'%s' is not a valid value "
-                "forr detect.grouping.udp-whitelist", ports);
+        SCLogWarning(SC_ERR_INVALID_YAML_CONF_ENTRY,
+                "'%s' is not a valid value "
+                "for detect.grouping.udp-whitelist",
+                ports);
     }
     for (x = de_ctx->udp_whitelist; x != NULL;  x = x->next) {
         if (x->port != x->port2) {
@@ -3237,6 +3246,8 @@ DetectEngineThreadCtx *DetectEngineThreadCtxInitForReload(
 
     /** alert counter setup */
     det_ctx->counter_alerts = StatsRegisterCounter("detect.alert", tv);
+    det_ctx->counter_alerts_overflow = StatsRegisterCounter("detect.alert_queue_overflow", tv);
+    det_ctx->counter_alerts_suppressed = StatsRegisterCounter("detect.alerts_suppressed", tv);
 #ifdef PROFILING
     uint16_t counter_mpm_list = StatsRegisterAvgCounter("detect.mpm_list", tv);
     uint16_t counter_nonmpm_list = StatsRegisterAvgCounter("detect.nonmpm_list", tv);

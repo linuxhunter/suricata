@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 Open Information Security Foundation
+/* Copyright (C) 2007-2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -29,6 +29,7 @@
 
 #include "detect.h"
 #include "detect-parse.h"
+#include "detect-content.h"
 
 #include "detect-engine.h"
 #include "detect-engine-mpm.h"
@@ -77,6 +78,17 @@ void DetectFilemagicRegister(void)
 }
 
 #else /* HAVE_MAGIC */
+
+typedef struct DetectFilemagicThreadData {
+    magic_t ctx;
+} DetectFilemagicThreadData;
+
+typedef struct DetectFilemagicData {
+    uint8_t *name; /** name of the file to match */
+    BmCtx *bm_ctx; /** BM context */
+    uint16_t len;  /** name length */
+    uint32_t flags;
+} DetectFilemagicData;
 
 static int DetectFilemagicMatch (DetectEngineThreadCtx *, Flow *,
         uint8_t, File *, const Signature *, const SigMatchCtx *);

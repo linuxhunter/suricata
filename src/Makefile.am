@@ -38,7 +38,6 @@ noinst_HEADERS = \
 	app-layer-modbus.h \
 	app-layer-quic.h \
 	app-layer-mqtt.h \
-	app-layer-nbss.h \
 	app-layer-nfs-tcp.h \
 	app-layer-nfs-udp.h \
 	app-layer-ntp.h \
@@ -81,7 +80,6 @@ noinst_HEADERS = \
 	decode-ipv6.h \
 	decode-mpls.h \
 	decode-nsh.h \
-	decode-null.h \
 	decode-ppp.h \
 	decode-pppoe.h \
 	decode-raw.h \
@@ -236,6 +234,7 @@ noinst_HEADERS = \
 	detect-krb5-errcode.h \
 	detect-krb5-msgtype.h \
 	detect-krb5-sname.h \
+	detect-krb5-ticket-encryption.h \
 	detect-l3proto.h \
 	detect-lua-extensions.h \
 	detect-lua.h \
@@ -611,7 +610,6 @@ noinst_HEADERS = \
 	util-validate.h \
 	util-var.h \
 	util-var-name.h \
-	util-vector.h \
 	util-ics.h \
 	win32-misc.h \
 	win32-service.h \
@@ -837,6 +835,7 @@ libsuricata_c_a_SOURCES = \
 	detect-krb5-errcode.c \
 	detect-krb5-msgtype.c \
 	detect-krb5-sname.c \
+	detect-krb5-ticket-encryption.c \
 	detect-l3proto.c \
 	detect-lua.c \
 	detect-lua-extensions.c \

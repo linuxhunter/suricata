@@ -35,6 +35,7 @@
 #include "tm-threads.h"
 #include "tmqh-packetpool.h"
 #include "threads.h"
+#include "util-affinity.h"
 #include "util-debug.h"
 #include "util-privs.h"
 #include "util-cpu.h"
@@ -174,9 +175,9 @@ static int TmThreadTimeoutLoop(ThreadVars *tv, TmSlot *s)
                 Packet *p = PacketDequeue(tv->stream_pq);
                 SCMutexUnlock(&tv->stream_pq->mutex_q);
                 if (likely(p)) {
-                    if ((r = TmThreadsSlotProcessPkt(tv, fw_slot, p) != TM_ECODE_OK)) {
-                        if (r == TM_ECODE_FAILED)
-                            break;
+                    r = TmThreadsSlotProcessPkt(tv, fw_slot, p);
+                    if (r == TM_ECODE_FAILED) {
+                        break;
                     }
                 }
             }

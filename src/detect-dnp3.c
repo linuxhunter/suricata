@@ -28,6 +28,7 @@
 #include "detect-engine-content-inspection.h"
 
 #include "app-layer-dnp3.h"
+#include "util-byte.h"
 
 static int g_dnp3_match_buffer_id = 0;
 static int g_dnp3_data_buffer_id = 0;
@@ -173,14 +174,6 @@ static InspectionBuffer *GetDNP3Data(DetectEngineThreadCtx *det_ctx,
         InspectionBufferApplyTransforms(buffer, transforms);
     }
     return buffer;
-}
-
-static uint8_t DetectEngineInspectDNP3(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
-        const struct DetectEngineAppInspectionEngine_ *engine, const Signature *s, Flow *f,
-        uint8_t flags, void *alstate, void *txv, uint64_t tx_id)
-{
-    return DetectEngineInspectGenericList(
-            de_ctx, det_ctx, s, engine->smd, f, flags, alstate, txv, tx_id);
 }
 
 /**
@@ -597,9 +590,9 @@ void DetectDNP3Register(void)
 
     /* Register the list of func, ind and obj. */
     DetectAppLayerInspectEngineRegister2(
-            "dnp3", ALPROTO_DNP3, SIG_FLAG_TOSERVER, 0, DetectEngineInspectDNP3, NULL);
+            "dnp3", ALPROTO_DNP3, SIG_FLAG_TOSERVER, 0, DetectEngineInspectGenericList, NULL);
     DetectAppLayerInspectEngineRegister2(
-            "dnp3", ALPROTO_DNP3, SIG_FLAG_TOCLIENT, 0, DetectEngineInspectDNP3, NULL);
+            "dnp3", ALPROTO_DNP3, SIG_FLAG_TOCLIENT, 0, DetectEngineInspectGenericList, NULL);
 
     g_dnp3_match_buffer_id = DetectBufferTypeRegister("dnp3");
 
