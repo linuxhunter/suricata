@@ -78,29 +78,29 @@ static inline uint32_t TluHash(uint32_t u1, uint32_t u2)
 static tlv_box_t* serialize_audit_common_data(const Packet *p, int template_id)
 {
 	tlv_box_t *box = NULL;
-	char eth_addr[19] = {0};
+	char eth_src[19] = {0}, eth_dst[19] = {0};
 	uint32_t flow_hash = 0;
 
 	box = tlv_box_create();
 	tlv_box_put_int(box, BEGIN, 0);
 	tlv_box_put_int(box, TEMPLATE_ID, template_id);
 	if (p->ethh != NULL) {
-		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+		(void) snprintf(eth_src, sizeof(eth_src), "%02x:%02x:%02x:%02x:%02x:%02x",
 			p->ethh->eth_src[0], p->ethh->eth_src[1],
 			p->ethh->eth_src[2], p->ethh->eth_src[3],
 			p->ethh->eth_src[4], p->ethh->eth_src[5]);
-		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+		(void) snprintf(eth_dst, sizeof(eth_dst), "%02x:%02x:%02x:%02x:%02x:%02x",
 			p->ethh->eth_dst[0], p->ethh->eth_dst[1],
 			p->ethh->eth_dst[2], p->ethh->eth_dst[3],
 			p->ethh->eth_dst[4], p->ethh->eth_dst[5]);
 	} else {
-		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+		(void) snprintf(eth_src, sizeof(eth_src), "%02x:%02x:%02x:%02x:%02x:%02x",
 			0, 0, 0, 0, 0, 0);
-		(void) snprintf(eth_addr, sizeof(eth_addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+		(void) snprintf(eth_dst, sizeof(eth_dst), "%02x:%02x:%02x:%02x:%02x:%02x",
 			0, 0, 0, 0, 0, 0);
 	}
-	tlv_box_put_string(box, SRC_MAC, eth_addr);
-	tlv_box_put_string(box, DST_MAC, eth_addr);
+	tlv_box_put_string(box, SRC_MAC, eth_src);
+	tlv_box_put_string(box, DST_MAC, eth_dst);
 	tlv_box_put_uint(box, SRC_IPv4, GET_IPV4_SRC_ADDR_U32(p));
 	tlv_box_put_uint(box, DST_IPv4, GET_IPV4_DST_ADDR_U32(p));
 	tlv_box_put_ushort(box, SRC_PORT, GET_TCP_SRC_PORT(p));
