@@ -488,6 +488,39 @@ out:
 	return ret;
 }
 
+static int serialize_study_trdp_data(const Packet *p, int template_id, ics_trdp_t *trdp, uint8_t **study_data, int *study_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *study_data_ptr = NULL;
+
+	box = serialize_study_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, TRDP);
+	tlv_box_put_uchar(box, TRDP_PACKET_TYPE, trdp->packet_type);
+	tlv_box_put_bytes(box, TRDP_PACKET_HEADER, (unsigned char *)&trdp->u.pd.header, sizeof(trdp->u.pd.header));
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*study_data_len = tlv_box_get_size(box);
+	if ((*study_data = SCMalloc(*study_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*study_data, 0x00, *study_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*study_data), *study_data_len, "%d:", *study_data_len);
+	study_data_ptr = (uint8_t *)strchr((char *)(*study_data), ':');
+	study_data_ptr++;
+	memcpy(study_data_ptr, tlv_box_get_buffer(box), *study_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+
+}
+
 static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
@@ -521,6 +554,11 @@ static int create_dnp3_warning_data(const Packet *p, int template_id, dnp3_ht_it
 static int create_trdp_audit_data(const Packet *p, ics_trdp_t *trdp, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_trdp_data(p, 0, trdp, audit_data, audit_data_len);
+}
+
+static int create_trdp_study_data(const Packet *p, int template_id, ics_trdp_t *trdp, uint8_t **study_data, int *study_data_len)
+{
+	return serialize_study_trdp_data(p, template_id, trdp, study_data, study_data_len);
 }
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
@@ -589,6 +627,16 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			if (ret != TM_ECODE_OK)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
+			switch(ics_adu->work_mode) {
+				case ICS_MODE_STUDY:
+					ret = create_trdp_study_data(p, ics_adu->template_id, ics_adu->u.trdp, &study_data, &study_data_len);
+					if (ret != TM_ECODE_OK)
+						goto out;
+					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
+					break;
+				default:
+					break;
+			}
 			break;
 		default:
 			goto out;
