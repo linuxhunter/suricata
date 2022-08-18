@@ -20,6 +20,7 @@ noinst_HEADERS = \
 	app-layer-dnp3-objects.h \
 	app-layer-enip-common.h \
 	app-layer-enip.h \
+	app-layer-trdp.h \
 	app-layer-events.h \
 	app-layer-expectation.h \
 	app-layer-frames.h \
@@ -626,6 +627,7 @@ libsuricata_c_a_SOURCES = \
 	app-layer-dnp3-objects.c \
 	app-layer-enip.c \
 	app-layer-enip-common.c \
+	app-layer-trdp.c \
 	app-layer-events.c \
 	app-layer-expectation.c \
 	app-layer-ftp.c \

@@ -56,6 +56,7 @@
 #include "app-layer-modbus.h"
 #include "app-layer-enip.h"
 #include "app-layer-dnp3.h"
+#include "app-layer-trdp.h"
 #include "app-layer-nfs-tcp.h"
 #include "app-layer-nfs-udp.h"
 #include "app-layer-ntp.h"
@@ -1677,6 +1678,7 @@ void AppLayerParserRegisterProtocolParsers(void)
     RegisterENIPUDPParsers();
     RegisterENIPTCPParsers();
     RegisterDNP3Parsers();
+	RegisterTRDPParsers();
     RegisterNFSTCPParsers();
     RegisterNFSUDPParsers();
     RegisterNTPParsers();
