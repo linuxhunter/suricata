@@ -72,11 +72,11 @@ typedef struct TRDPTransaction_ {
 	struct TRDPState_ *trdp;
 	TRDP_PACKET_t packet;
 	TAILQ_ENTRY(TRDPTransaction_) next;
-} TRDPTransaction_t;
+} TRDPTransaction;
 
 typedef struct TRDPState_ {
 	TAILQ_HEAD(, TRDPTransaction_) tx_list;
-	TRDPTransaction_t *curr;
+	TRDPTransaction *curr;
 	uint64_t transaction_max;
 } TRDPState;
 

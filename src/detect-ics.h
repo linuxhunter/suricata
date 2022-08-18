@@ -4,6 +4,7 @@
 #include "app-layer-protos.h"
 #include "detect-ics-modbus.h"
 #include "detect-ics-dnp3.h"
+#include "detect-ics-trdp.h"
 
 typedef enum {
 	ICS_MODE_MIN = 0,
@@ -16,6 +17,7 @@ typedef enum {
 typedef enum {
 	MODBUS = 0,
 	DNP3,
+	TRDP,
 	ICS_PROTO_MAX,
 } ics_proto_t;
 
@@ -28,6 +30,7 @@ typedef struct {
 	union {
 		ics_modbus_t *modbus;
 		ics_dnp3_t *dnp3;
+		ics_trdp_t *trdp;
 	}u;
 	union {
 		modbus_ht_item_t *modbus;

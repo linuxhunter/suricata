@@ -83,7 +83,8 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 	if (work_mode <= ICS_MODE_MIN || work_mode >= ICS_MODE_MAX)
 		goto error;
 	if (f->alproto != ALPROTO_MODBUS &&
-		f->alproto != ALPROTO_DNP3)
+		f->alproto != ALPROTO_DNP3 &&
+		f->alproto != ALPROTO_TRDP)
 		goto error;
 	ics_adu->work_mode = work_mode;
 	ics_adu->proto = f->alproto;
@@ -115,6 +116,14 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 						goto error;
 					memset(ics_adu->warning.dnp3, 0x00, sizeof(dnp3_ht_item_t));
 				}
+			}
+			break;
+		case ALPROTO_TRDP:
+			{
+				ics_adu->u.trdp = SCMalloc(sizeof(ics_trdp_t));
+				if (ics_adu->u.trdp == NULL)
+					goto error;
+				memset(ics_adu->u.trdp, 0x00, sizeof(ics_trdp_t));
 			}
 			break;
 		default:
@@ -187,6 +196,11 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
+		case ALPROTO_TRDP:
+			ret = detect_get_trdp_adu(p->flow, ics_adu->u.trdp);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			break;
 		default:
 			ret = TM_ECODE_FAILED;
 			goto out;
@@ -201,7 +215,8 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 
 	if (p->flow && (p->flowflags & FLOW_PKT_TOSERVER)) {
 		if (p->flow->alproto == ALPROTO_MODBUS ||
-			p->flow->alproto == ALPROTO_DNP3) {
+			p->flow->alproto == ALPROTO_DNP3 ||
+			p->flow->alproto == ALPROTO_TRDP) {
 			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow, global_ics_template_id);
 			if (ics_adu == NULL) {
 				SCLogNotice("create modbus adu error.\n");

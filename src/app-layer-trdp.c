@@ -13,9 +13,9 @@
 
 #include "app-layer-trdp.h"
 
-static TRDPTransaction_t *TRDPTxAlloc(TRDPState *trdp)
+static TRDPTransaction *TRDPTxAlloc(TRDPState *trdp)
 {
-	TRDPTransaction_t *tx = SCCalloc(1, sizeof(TRDPTransaction_t));
+	TRDPTransaction *tx = SCCalloc(1, sizeof(TRDPTransaction));
 	if (unlikely(tx == NULL))
 		return NULL;
 	trdp->transaction_max++;
@@ -26,7 +26,7 @@ static TRDPTransaction_t *TRDPTxAlloc(TRDPState *trdp)
 	return tx;
 }
 
-static void TRDPTxFree(TRDPTransaction_t *tx)
+static void TRDPTxFree(TRDPTransaction *tx)
 {
 	SCEnter();
 	SCFree(tx);
@@ -57,7 +57,7 @@ static AppLayerResult TRDPParseRequest(Flow *f, void *state, AppLayerParserState
 	TRDPState *trdp = (TRDPState *)state;
 	const uint8_t *input = StreamSliceGetData(&stream_slice);
 	uint32_t input_len = StreamSliceGetDataLen(&stream_slice);
-	TRDPTransaction_t *tx;
+	TRDPTransaction *tx;
 	uint32_t offset = 0;
 
 	if (input_len == 0)
@@ -116,7 +116,7 @@ static void TRDPStateFree(void *state)
 {
 	SCEnter();
 	TRDPState *trdp = state;
-	TRDPTransaction_t *tx;
+	TRDPTransaction *tx;
 
 	if (state != NULL) {
 		while ((tx = TAILQ_FIRST(&trdp->tx_list)) != NULL) {
@@ -132,7 +132,7 @@ static void *TRDPGetTx(void *alstate, uint64_t tx_id)
 {
 	SCEnter();
 	TRDPState *trdp = (TRDPState *)alstate;
-	TRDPTransaction_t *tx = NULL;
+	TRDPTransaction *tx = NULL;
 	uint64_t tx_num = tx_id + 1;
 
 	if (trdp->curr && trdp->curr->tx_num == (tx_num)) {
@@ -160,7 +160,7 @@ static void TRDPStateTxFree(void *state, uint64_t tx_id)
 {
 	SCEnter();
 	TRDPState *trdp = state;
-	TRDPTransaction_t *tx = NULL, *ttx;
+	TRDPTransaction *tx = NULL, *ttx;
 	uint64_t tx_num = tx_id + 1;
 
 	TAILQ_FOREACH_SAFE(tx, &trdp->tx_list, next, ttx) {
@@ -187,7 +187,7 @@ static int TRDPGetAlstateProgress(void *tx, uint8_t direction)
 
 static AppLayerTxData *TRDPGetTxData(void *vtx)
 {
-	TRDPTransaction_t *tx = (TRDPTransaction_t *)vtx;
+	TRDPTransaction *tx = (TRDPTransaction *)vtx;
 	return &tx->tx_data;
 }
 
