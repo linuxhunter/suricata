@@ -35,6 +35,7 @@ typedef struct {
 	union {
 		modbus_ht_item_t *modbus;
 		dnp3_ht_item_t *dnp3;
+		trdp_ht_item_t *trdp;
 	}warning;
 } ics_adu_t;
 

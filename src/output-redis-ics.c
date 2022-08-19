@@ -521,6 +521,37 @@ out:
 
 }
 
+static int serialize_warning_trdp_data(const Packet *p, int template_id, trdp_ht_item_t *trdp, uint8_t **warning_data, int *warning_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *warning_data_ptr = NULL;
+
+	box = serialize_warning_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, TRDP);
+	tlv_box_put_bytes(box, TRDP_WARNING_DATA, (unsigned char *)trdp, sizeof(trdp_ht_item_t));
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*warning_data_len = tlv_box_get_size(box);
+	if ((*warning_data = SCMalloc(*warning_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*warning_data, 0x00, *warning_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*warning_data), *warning_data_len, "%d:", *warning_data_len);
+	warning_data_ptr = (uint8_t *)strchr((char *)(*warning_data), ':');
+	warning_data_ptr++;
+	memcpy(warning_data_ptr, tlv_box_get_buffer(box), *warning_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
@@ -559,6 +590,11 @@ static int create_trdp_audit_data(const Packet *p, ics_trdp_t *trdp, uint8_t **a
 static int create_trdp_study_data(const Packet *p, int template_id, ics_trdp_t *trdp, uint8_t **study_data, int *study_data_len)
 {
 	return serialize_study_trdp_data(p, template_id, trdp, study_data, study_data_len);
+}
+
+static int create_trdp_warning_data(const Packet *p, int template_id, trdp_ht_item_t *trdp, uint8_t **warning_data, int *warning_data_len)
+{
+	return serialize_warning_trdp_data(p, template_id, trdp, warning_data, warning_data_len);
 }
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
@@ -633,6 +669,14 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 					if (ret != TM_ECODE_OK)
 						goto out;
 					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
+					break;
+				case ICS_MODE_WARNING:
+					if (ics_adu->flags & ICS_ADU_WARNING_INVALID_FLAG) {
+						ret = create_trdp_warning_data(p, ics_adu->template_id, ics_adu->warning.trdp, &warning_data, &warning_data_len);
+						if (ret != TM_ECODE_OK)
+							goto out;
+						ICSSendRedisLog(c, ICS_MODE_WARNING, warning_data, warning_data_len);
+					}
 					break;
 				default:
 					break;

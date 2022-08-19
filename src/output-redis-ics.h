@@ -46,6 +46,7 @@ typedef enum {
 	TRDP_PACKET_TYPE,
 	TRDP_PACKET_HEADER,
 	TRDP_PACKET_DATA,
+	TRDP_WARNING_DATA,
 	END,
 } ics_tlv_type_t;
 

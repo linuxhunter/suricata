@@ -26,6 +26,9 @@ static int init_ics_hashtables(void)
 			case DNP3:
 				ret = init_dnp3_hashtable(&global_ics_hashtables[i].hashtable, ICS_HASHTABLE_SIZE);
 				break;
+			case TRDP:
+				ret = init_trdp_hashtable(&global_ics_hashtables[i].hashtable, ICS_HASHTABLE_SIZE);
+				break;
 			default:
 				continue;
 		}
@@ -52,6 +55,10 @@ static int create_ics_hashtables(intmax_t template_id)
 				create_dnp3_hashtable(global_ics_hashtables[DNP3].hashtable, template_id);
 				SCMutexUnlock(&global_ics_hashtables[DNP3].mutex);
 				break;
+			case TRDP:
+				SCMutexLock(&global_ics_hashtables[TRDP].mutex);
+				create_trdp_hashtable(global_ics_hashtables[TRDP].hashtable, template_id);
+				SCMutexUnlock(&global_ics_hashtables[TRDP].mutex);
 			default:
 				break;
 		}
@@ -124,6 +131,12 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 				if (ics_adu->u.trdp == NULL)
 					goto error;
 				memset(ics_adu->u.trdp, 0x00, sizeof(ics_trdp_t));
+				if (work_mode == ICS_MODE_WARNING) {
+					ics_adu->warning.trdp = SCMalloc(sizeof(trdp_ht_item_t));
+					if (ics_adu->warning.trdp == NULL)
+						goto error;
+					memset(ics_adu->warning.trdp, 0x00, sizeof(trdp_ht_item_t));
+				}
 			}
 			break;
 		default:
@@ -200,6 +213,10 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 			ret = detect_get_trdp_adu(p->flow, ics_adu->u.trdp);
 			if (ret != TM_ECODE_OK)
 				goto out;
+			if (global_ics_work_mode == ICS_MODE_WARNING) {
+				if (match_trdp_ht_item(global_ics_hashtables[TRDP].hashtable, p, ics_adu->u.trdp, ics_adu->warning.trdp) == 0)
+					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
+			}
 			break;
 		default:
 			ret = TM_ECODE_FAILED;
