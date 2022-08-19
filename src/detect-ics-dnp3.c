@@ -149,6 +149,7 @@ int detect_get_dnp3_study_data(Packet *p, ics_dnp3_t *audit_dnp3, dnp3_ht_items_
 				study_dnp3->items[study_data_index].sip = sip;
 				study_dnp3->items[study_data_index].dip = dip;
 				study_dnp3->items[study_data_index].proto = proto;
+				study_dnp3->items[study_data_index].funcode = funcode;
 				study_dnp3->items[study_data_index].group = group;
 				study_dnp3->items[study_data_index].variation = variation;
 				study_dnp3->items[study_data_index].index = index;
@@ -159,6 +160,7 @@ int detect_get_dnp3_study_data(Packet *p, ics_dnp3_t *audit_dnp3, dnp3_ht_items_
 			study_dnp3->items[study_data_index].sip = sip;
 			study_dnp3->items[study_data_index].dip = dip;
 			study_dnp3->items[study_data_index].proto = proto;
+			study_dnp3->items[study_data_index].funcode = funcode;
 			study_dnp3->items[study_data_index].group = group;
 			study_dnp3->items[study_data_index].variation = variation;
 			study_dnp3->items[study_data_index].index = 0;

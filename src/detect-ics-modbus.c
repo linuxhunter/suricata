@@ -131,7 +131,7 @@ int detect_get_modbus_study_data(Packet *p, ics_modbus_t *audit_modbus, modbus_h
 		case 5:
 		case 6:
 			study_modbus->address = audit_modbus->u.addr_data.address;
-			study_modbus->quantity = audit_modbus->u.addr_data.data;
+			study_modbus->quantity = 1;
 			break;
 		case 15:
 			study_modbus->address = audit_modbus->u.addr_quan_data.address;
@@ -224,7 +224,7 @@ int create_modbus_hashtable(HashTable *ht, intmax_t template_id)
 	MYSQL_ROW record;
 	uint32_t sip, dip;
 	uint8_t proto, funcode;
-	uint16_t address, quantity;
+	uint32_t address, quantity;
 
     if ((handle = sql_db_connect(DB_NAME)) == NULL) {
         SCLogNotice("connect database study_modbus_table error.\n");

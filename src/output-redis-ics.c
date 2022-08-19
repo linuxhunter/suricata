@@ -454,7 +454,6 @@ static int serialize_study_dnp3_data(const Packet *p, int template_id, dnp3_ht_i
 	}
 	box = serialize_study_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
-	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->items[0].funcode);
 	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->dnp3_ht_count);
 	dnp3_object_buffer = MemBufferCreateNew(DNP3_OBJECT_BUFFER_LENGTH);
 	if (dnp3_object_buffer == NULL) {
@@ -463,8 +462,9 @@ static int serialize_study_dnp3_data(const Packet *p, int template_id, dnp3_ht_i
 		goto out;
 	}
 	for (uint32_t i = 0; i < dnp3->dnp3_ht_count; i++) {
-		if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint8_t)*2 + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_object_buffer))
+		if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint8_t)*3 + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_object_buffer))
 			MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
+		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].funcode, sizeof(uint8_t));
 		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].group, sizeof(uint8_t));
 		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].variation, sizeof(uint8_t));
 		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].index, sizeof(uint32_t));
