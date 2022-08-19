@@ -10,6 +10,33 @@
 
 #include "detect-ics-dnp3.h"
 
+static dnp3_ht_item_t* alloc_dnp3_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
+	uint8_t funcode, uint8_t group, uint8_t variation, uint32_t index, uint32_t size)
+{
+	dnp3_ht_item_t *dnp3_item = NULL;
+
+	if ((dnp3_item = malloc(sizeof(*dnp3_item))) == NULL) {
+		goto out;
+	}
+	dnp3_item->sip = sip;
+	dnp3_item->dip = dip;
+	dnp3_item->proto = proto;
+	dnp3_item->funcode = funcode;
+	dnp3_item->group = group;
+	dnp3_item->variation = variation;
+	dnp3_item->index = index;
+	dnp3_item->size = size;
+out:
+	return dnp3_item;
+}
+
+static void free_dnp3_ht_item(dnp3_ht_item_t *dnp3_item)
+{
+	if (dnp3_item)
+		SCFree(dnp3_item);
+	return;
+}
+
 static void* get_dnp3_tx(void *al_state, uint64_t tx_id)
 {
 	DNP3State *dnp3_state = (DNP3State *)al_state;
@@ -33,17 +60,16 @@ static uint64_t get_dnp3_tx_count(void *state)
 	return count;
 }
 
-int detect_get_dnp3_adu(Flow *p, ics_dnp3_t *ics_dnp3)
+int detect_get_dnp3_audit_data(Packet *p, ics_dnp3_t *ics_dnp3)
 {
 	int ret = TM_ECODE_OK;
-	DNP3State *dnp3_state = p->alstate;
+	DNP3State *dnp3_state = p->flow->alstate;
 	DNP3Transaction *tx = NULL;
 	uint64_t tx_count = 0;
 	DNP3Object *object = NULL;
 	DNP3Point *point = NULL;
 	uint32_t point_index = 0;
 	void *rptr = NULL;
-
 
 	if (dnp3_state == NULL) {
 		SCLogNotice("DNP3 State is NULL\n");
@@ -87,31 +113,61 @@ out:
 	return ret;
 }
 
-static dnp3_ht_item_t* alloc_dnp3_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
-	uint8_t funcode, uint8_t group, uint8_t variation, uint32_t index, uint32_t size)
-{
-	dnp3_ht_item_t *dnp3_item = NULL;
 
-	if ((dnp3_item = SCMalloc(sizeof(dnp3_ht_item_t))) == NULL) {
+int detect_get_dnp3_study_data(Packet *p, ics_dnp3_t *audit_dnp3, dnp3_ht_items_t *study_dnp3)
+{
+	int ret = 0;
+    uint32_t sip, dip, index, size, total_count = 0, study_data_index = 0;
+    uint8_t proto, funcode, group, variation;
+
+    sip = GET_IPV4_SRC_ADDR_U32(p);
+    dip = GET_IPV4_DST_ADDR_U32(p);
+    proto = IP_GET_IPPROTO(p);
+	funcode = audit_dnp3->function_code;
+
+	for (uint32_t i = 0; i < audit_dnp3->object_count; i++) {
+		if (audit_dnp3->objects[i].point_count > 0) {
+			for (uint32_t j = 0; j < audit_dnp3->objects[i].point_count; j++)
+				total_count++;
+		} else {
+			total_count++;
+		}
+	}
+	study_dnp3->dnp3_ht_count = total_count;
+	if ((study_dnp3->items = SCMalloc(sizeof(dnp3_ht_item_t)*total_count)) == NULL) {
+		ret = -1;
 		goto out;
 	}
-	dnp3_item->sip = sip;
-	dnp3_item->dip = dip;
-	dnp3_item->proto = proto;
-	dnp3_item->funcode = funcode;
-	dnp3_item->group = group;
-	dnp3_item->variation = variation;
-	dnp3_item->index = index;
-	dnp3_item->size = size;
+	memset(study_dnp3->items, 0x00, sizeof(dnp3_ht_item_t)*total_count);
+	for (uint32_t i = 0; i < audit_dnp3->object_count; i++) {
+		group = audit_dnp3->objects[i].group;
+		variation = audit_dnp3->objects[i].variation;
+		if (audit_dnp3->objects[i].point_count > 0) {
+			for (uint32_t j = 0; j < audit_dnp3->objects[i].point_count; j++) {
+				index = audit_dnp3->objects[i].points[j].index;
+				size = audit_dnp3->objects[i].points[j].size;
+				study_dnp3->items[study_data_index].sip = sip;
+				study_dnp3->items[study_data_index].dip = dip;
+				study_dnp3->items[study_data_index].proto = proto;
+				study_dnp3->items[study_data_index].group = group;
+				study_dnp3->items[study_data_index].variation = variation;
+				study_dnp3->items[study_data_index].index = index;
+				study_dnp3->items[study_data_index].size = size;
+				study_data_index++;
+			}
+		} else {
+			study_dnp3->items[study_data_index].sip = sip;
+			study_dnp3->items[study_data_index].dip = dip;
+			study_dnp3->items[study_data_index].proto = proto;
+			study_dnp3->items[study_data_index].group = group;
+			study_dnp3->items[study_data_index].variation = variation;
+			study_dnp3->items[study_data_index].index = 0;
+			study_dnp3->items[study_data_index].size = 0;
+			study_data_index++;
+		}
+	}
 out:
-	return dnp3_item;
-}
-
-static void free_dnp3_ht_item(dnp3_ht_item_t *dnp3_item)
-{
-	if (dnp3_item)
-		SCFree(dnp3_item);
-	return;
+	return ret;
 }
 
 static uint32_t ics_dnp3_hashfunc(HashTable *ht, void *data, uint16_t datalen)
@@ -240,7 +296,7 @@ static int __match_dnp3_ht_item(HashTable *ht, dnp3_ht_item_t *dnp3_item)
 	return matched;
 }
 
-int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3, dnp3_ht_item_t *warning_data)
+int detect_get_dnp3_warning_data(HashTable *ht, Packet *p, ics_dnp3_t *audit_dnp3, dnp3_ht_item_t *warning_dnp3)
 {
 	int matched = 0;
 	uint32_t sip, dip, index, size;
@@ -250,20 +306,20 @@ int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3, dnp3_ht_item_
 	sip = GET_IPV4_SRC_ADDR_U32(p);
 	dip = GET_IPV4_DST_ADDR_U32(p);
 	proto = IP_GET_IPPROTO(p);
-	funcode = dnp3->function_code;
-	for (uint32_t i = 0; i < dnp3->object_count; i++) {
-		group = dnp3->objects[i].group;
-		variation = dnp3->objects[i].variation;
-		if (dnp3->objects[i].point_count > 0) {
-			for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
-				index = dnp3->objects[i].points[j].index;
-				size = dnp3->objects[i].points[j].size;
+	funcode = audit_dnp3->function_code;
+	for (uint32_t i = 0; i < audit_dnp3->object_count; i++) {
+		group = audit_dnp3->objects[i].group;
+		variation = audit_dnp3->objects[i].variation;
+		if (audit_dnp3->objects[i].point_count > 0) {
+			for (uint32_t j = 0; j < audit_dnp3->objects[i].point_count; j++) {
+				index = audit_dnp3->objects[i].points[j].index;
+				size = audit_dnp3->objects[i].points[j].size;
 				if ((dnp3_item = alloc_dnp3_ht_item(sip, dip, proto, funcode, group, variation, index, size)) == NULL) {
 					matched = 1;
 					goto out;
 				}
 				if (__match_dnp3_ht_item(ht, dnp3_item) == 0) {
-					memcpy(warning_data, dnp3_item, sizeof(dnp3_ht_item_t));
+					memcpy(warning_dnp3, dnp3_item, sizeof(dnp3_ht_item_t));
 					goto out;
 				}
 			}
@@ -275,7 +331,7 @@ int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3, dnp3_ht_item_
 				goto out;
 			}
 			if (__match_dnp3_ht_item(ht, dnp3_item) == 0) {
-				memcpy(warning_data, dnp3_item, sizeof(dnp3_ht_item_t));
+				memcpy(warning_dnp3, dnp3_item, sizeof(dnp3_ht_item_t));
 				goto out;
 			}
 		}

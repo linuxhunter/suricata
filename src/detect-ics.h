@@ -7,18 +7,18 @@
 #include "detect-ics-trdp.h"
 
 typedef enum {
-	ICS_MODE_MIN = 0,
-	ICS_MODE_STUDY,
-	ICS_MODE_NORMAL,
-	ICS_MODE_WARNING,
-	ICS_MODE_MAX,
+    ICS_MODE_MIN = 0,
+    ICS_MODE_STUDY,
+    ICS_MODE_NORMAL,
+    ICS_MODE_WARNING,
+    ICS_MODE_MAX,
 } ics_mode_t;
 
 typedef enum {
-	MODBUS = 0,
-	DNP3,
-	TRDP,
-	ICS_PROTO_MAX,
+    MODBUS = 0,
+    DNP3,
+    TRDP,
+    ICS_PROTO_MAX,
 } ics_proto_t;
 
 #define ICS_ADU_WARNING_INVALID_FLAG	0x01
@@ -31,7 +31,12 @@ typedef struct {
 		ics_modbus_t *modbus;
 		ics_dnp3_t *dnp3;
 		ics_trdp_t *trdp;
-	}u;
+	}audit;
+	union {
+		modbus_ht_item_t *modbus;
+		dnp3_ht_items_t *dnp3;
+		trdp_ht_item_t *trdp;
+	}study;
 	union {
 		modbus_ht_item_t *modbus;
 		dnp3_ht_item_t *dnp3;

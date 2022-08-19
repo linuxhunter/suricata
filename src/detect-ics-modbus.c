@@ -11,10 +11,33 @@
 
 #include "detect-ics-modbus.h"
 
-int detect_get_modbus_adu(Flow *f, ics_modbus_t *ics_modbus)
+static modbus_ht_item_t* alloc_modbus_ht_item(uint32_t sip, uint32_t dip, uint8_t proto, uint8_t funcode, uint32_t address, uint32_t quantity)
+{
+	modbus_ht_item_t *modbus_item = NULL;
+
+	if ((modbus_item = SCMalloc(sizeof(modbus_ht_item_t))) == NULL)
+		goto out;
+	modbus_item->sip = sip;
+	modbus_item->dip = dip;
+	modbus_item->proto = proto;
+	modbus_item->funcode = funcode;
+	modbus_item->address = address;
+	modbus_item->quantity = quantity;
+out:
+	return modbus_item;
+}
+
+static void free_modbus_ht_item(modbus_ht_item_t *modbus_item)
+{
+	if (modbus_item != NULL)
+		SCFree(modbus_item);
+	return;
+}
+
+int detect_get_modbus_audit_data(Packet *p, ics_modbus_t *audit_modbus)
 {
 	int ret = TM_ECODE_OK;
-	ModbusState *modbus_state = f->alstate;
+	ModbusState *modbus_state = p->flow->alstate;
 	ModbusMessage request;
 	int tx_counts = 0;
 	uint8_t funcode;
@@ -39,77 +62,95 @@ int detect_get_modbus_adu(Flow *f, ics_modbus_t *ics_modbus)
 		case 2:
 		case 3:
 		case 4:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.addr_quan.address = rs_modbus_message_get_read_request_address(&request);
-			ics_modbus->u.addr_quan.quantity = rs_modbus_message_get_read_request_quantity(&request);
+			audit_modbus->funcode = funcode;
+			audit_modbus->u.addr_quan.address = rs_modbus_message_get_read_request_address(&request);
+			audit_modbus->u.addr_quan.quantity = rs_modbus_message_get_read_request_quantity(&request);
 			break;
 		case 5:
 		case 6:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.addr_data.address = rs_modbus_message_get_write_address(&request);
-			ics_modbus->u.addr_data.data = rs_modbus_message_get_write_data(&request);
+			audit_modbus->funcode = funcode;
+			audit_modbus->u.addr_data.address = rs_modbus_message_get_write_address(&request);
+			audit_modbus->u.addr_data.data = rs_modbus_message_get_write_data(&request);
 			break;
 		case 8:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.subfunc.subfunction = rs_modbus_message_get_subfunction(&request);
-			break;
+			audit_modbus->funcode = funcode;
+			audit_modbus->u.subfunc.subfunction = rs_modbus_message_get_subfunction(&request);
+			goto out;
 		case 15:
 			{
 				size_t data_len;
 				const uint8_t *data = rs_modbus_message_get_write_multreq_data(&request, &data_len);
-				ics_modbus->funcode = funcode;
-				ics_modbus->u.addr_quan_data.address = rs_modbus_message_get_write_multreq_address(&request);
-				ics_modbus->u.addr_quan_data.quantity = rs_modbus_message_get_write_multreq_quantity(&request);
-				ics_modbus->u.addr_quan_data.data_len = data_len;
-				memcpy(&ics_modbus->u.addr_quan_data.data, data, sizeof(ics_modbus->u.addr_quan_data.data));
+				audit_modbus->funcode = funcode;
+				audit_modbus->u.addr_quan_data.address = rs_modbus_message_get_write_multreq_address(&request);
+				audit_modbus->u.addr_quan_data.quantity = rs_modbus_message_get_write_multreq_quantity(&request);
+				audit_modbus->u.addr_quan_data.data_len = data_len;
+				memcpy(&audit_modbus->u.addr_quan_data.data, data, sizeof(audit_modbus->u.addr_quan_data.data));
 			}
 			break;
 		case 16:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.addr_quan.address = rs_modbus_message_get_write_multreq_address(&request);
-			ics_modbus->u.addr_quan.quantity = rs_modbus_message_get_write_multreq_quantity(&request);
+			audit_modbus->funcode = funcode;
+			audit_modbus->u.addr_quan.address = rs_modbus_message_get_write_multreq_address(&request);
+			audit_modbus->u.addr_quan.quantity = rs_modbus_message_get_write_multreq_quantity(&request);
 			break;
 		case 22:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.and_or_mask.and_mask = rs_modbus_message_get_and_mask(&request);
-			ics_modbus->u.and_or_mask.or_mask = rs_modbus_message_get_or_mask(&request);
-			break;
+			audit_modbus->funcode = funcode;
+			audit_modbus->u.and_or_mask.and_mask = rs_modbus_message_get_and_mask(&request);
+			audit_modbus->u.and_or_mask.or_mask = rs_modbus_message_get_or_mask(&request);
+			goto out;
 		case 23:
-			ics_modbus->funcode = funcode;
-			ics_modbus->u.rw_addr_quan.read_address = rs_modbus_message_get_rw_multreq_read_address(&request);
-			ics_modbus->u.rw_addr_quan.read_quantity = rs_modbus_message_get_rw_multreq_read_quantity(&request);
-			ics_modbus->u.rw_addr_quan.write_address = rs_modbus_message_get_rw_multreq_write_address(&request);
-			ics_modbus->u.rw_addr_quan.write_quantity = rs_modbus_message_get_rw_multreq_write_quantity(&request);
+			audit_modbus->funcode = funcode;
+			audit_modbus->u.rw_addr_quan.read_address = rs_modbus_message_get_rw_multreq_read_address(&request);
+			audit_modbus->u.rw_addr_quan.read_quantity = rs_modbus_message_get_rw_multreq_read_quantity(&request);
+			audit_modbus->u.rw_addr_quan.write_address = rs_modbus_message_get_rw_multreq_write_address(&request);
+			audit_modbus->u.rw_addr_quan.write_quantity = rs_modbus_message_get_rw_multreq_write_quantity(&request);
 			break;
 		default:
-			ics_modbus->funcode = funcode;
-			break;
+			audit_modbus->funcode = funcode;
+			goto out;
 	}
 out:
 	return ret;
 }
 
-static modbus_ht_item_t* alloc_modbus_ht_item(uint32_t sip, uint32_t dip, uint8_t proto, uint8_t funcode, uint16_t address, uint16_t quantity)
+int detect_get_modbus_study_data(Packet *p, ics_modbus_t *audit_modbus, modbus_ht_item_t *study_modbus)
 {
-	modbus_ht_item_t *modbus_item = NULL;
+	int ret = 0;
 
-	if ((modbus_item = SCMalloc(sizeof(modbus_ht_item_t))) == NULL)
-		goto out;
-	modbus_item->sip = sip;
-	modbus_item->dip = dip;
-	modbus_item->proto = proto;
-	modbus_item->funcode = funcode;
-	modbus_item->address = address;
-	modbus_item->quantity = quantity;
+	study_modbus->sip = GET_IPV4_SRC_ADDR_U32(p);
+	study_modbus->dip = GET_IPV4_DST_ADDR_U32(p);
+	study_modbus->proto = IP_GET_IPPROTO(p);
+	study_modbus->funcode = audit_modbus->funcode;
+	switch(audit_modbus->funcode) {
+		case 1:
+		case 2:
+		case 3:
+		case 4:
+			study_modbus->address = audit_modbus->u.addr_quan.address;
+			study_modbus->quantity = audit_modbus->u.addr_quan.quantity;
+			break;
+		case 5:
+		case 6:
+			study_modbus->address = audit_modbus->u.addr_data.address;
+			study_modbus->quantity = audit_modbus->u.addr_data.data;
+			break;
+		case 15:
+			study_modbus->address = audit_modbus->u.addr_quan_data.address;
+			study_modbus->quantity = audit_modbus->u.addr_quan_data.quantity;
+			break;
+		case 16:
+			study_modbus->address = audit_modbus->u.addr_quan.address;
+			study_modbus->quantity = audit_modbus->u.addr_quan.quantity;
+			break;
+		case 23:
+			study_modbus->address = (audit_modbus->u.rw_addr_quan.write_address << 16) + audit_modbus->u.rw_addr_quan.read_address;
+			study_modbus->quantity = (audit_modbus->u.rw_addr_quan.write_quantity << 16) + audit_modbus->u.rw_addr_quan.read_quantity;
+			break;
+		default:
+			ret = -1;
+			goto out;
+	}
 out:
-	return modbus_item;
-}
-
-static void free_modbus_ht_item(modbus_ht_item_t *modbus_item)
-{
-	if (modbus_item != NULL)
-		SCFree(modbus_item);
-	return;
+	return ret;
 }
 
 static uint32_t ics_modbus_hashfunc(HashTable *ht, void *data, uint16_t datalen)
@@ -223,73 +264,60 @@ out:
     return 0;
 }
 
-int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus, modbus_ht_item_t *warning_data)
+int detect_get_modbus_warning_data(HashTable *ht, Packet *p, ics_modbus_t *audit_modbus, modbus_ht_item_t *warning_modbus)
 {
-	int matched = 0;
-	uint32_t sip, dip;
-	uint8_t proto, funcode;
-	uint16_t address, quantity, address2, quantity2;
-	modbus_ht_item_t *modbus_item = NULL;
+       int matched = 0;
+       uint32_t sip, dip;
+       uint8_t proto, funcode;
+       uint32_t address = 0, quantity = 0;
+       modbus_ht_item_t *modbus_item = NULL;
 
-	sip = GET_IPV4_SRC_ADDR_U32(p);
-	dip = GET_IPV4_DST_ADDR_U32(p);
-	proto = IP_GET_IPPROTO(p);
-	funcode = modbus->funcode;
-	switch(funcode) {
-		case 1:
-		case 2:
-		case 3:
-		case 4:
-			address = modbus->u.addr_quan.address;
-			quantity = modbus->u.addr_quan.quantity;
-			break;
-		case 5:
-		case 6:
-			address = modbus->u.addr_data.address;
-			quantity = 1;
-			break;
-		case 15:
-			address = modbus->u.addr_quan_data.address;
-			quantity = modbus->u.addr_quan_data.quantity;
-			break;
-		case 16:
-			address = modbus->u.addr_quan.address;
-			quantity = modbus->u.addr_quan.quantity;
-			break;
-		case 23:
-			address = modbus->u.rw_addr_quan.read_address;
-			quantity = modbus->u.rw_addr_quan.read_quantity;
-			address2 = modbus->u.rw_addr_quan.write_address;
-			quantity2 = modbus->u.rw_addr_quan.write_quantity;
-			break;
-		default:
-			matched = 1;
-			goto out;
-	}
-	if ((modbus_item = alloc_modbus_ht_item(sip, dip, proto, funcode, address, quantity)) == NULL) {
-		matched = 1;
-		goto out;
-	}
-	if (HashTableLookup(ht, modbus_item, 0) == NULL) {
-		memcpy(warning_data, modbus_item, sizeof(modbus_ht_item_t));
-		goto out;
-	} else {
-		if (funcode == 23) {
-			modbus_item->address = address2;
-			modbus_item->quantity = quantity2;
-			if (HashTableLookup(ht, modbus_item, 0) == NULL) {
-				memcpy(warning_data, modbus_item, sizeof(modbus_ht_item_t));
-				goto out;
-			} else
-				matched = 1;
-		} else {
-			matched = 1;
-		}
-	}
+	   sip = GET_IPV4_SRC_ADDR_U32(p);
+	   dip = GET_IPV4_DST_ADDR_U32(p);
+	   proto = IP_GET_IPPROTO(p);
+	   funcode = audit_modbus->funcode;
+	   switch(funcode) {
+		   case 1:
+		   case 2:
+		   case 3:
+		   case 4:
+			   address = audit_modbus->u.addr_quan.address;
+			   quantity = audit_modbus->u.addr_quan.quantity;
+			   break;
+		   case 5:
+		   case 6:
+			   address = audit_modbus->u.addr_data.address;
+			   quantity = 1;
+			   break;
+		   case 15:
+			   address = audit_modbus->u.addr_quan_data.address;
+			   quantity = audit_modbus->u.addr_quan_data.quantity;
+			   break;
+		   case 16:
+			   address = audit_modbus->u.addr_quan.address;
+			   quantity = audit_modbus->u.addr_quan.quantity;
+			   break;
+		   case 23:
+			   address = (audit_modbus->u.rw_addr_quan.write_address << 16) + audit_modbus->u.rw_addr_quan.read_address;
+			   quantity = (audit_modbus->u.rw_addr_quan.write_quantity << 16) + audit_modbus->u.rw_addr_quan.read_quantity;
+			   break;
+		   default:
+			   matched = 1;
+			   goto out;
+	   }
+	   if ((modbus_item = alloc_modbus_ht_item(sip, dip, proto, funcode, address, quantity)) == NULL) {
+		   matched = 1;
+		   goto out;
+	   }
+
+	   if (HashTableLookup(ht, modbus_item, 0) == NULL) {
+		   memcpy(warning_modbus, modbus_item, sizeof(modbus_ht_item_t));
+	   } else {
+		   matched = 1;
+	   }
 out:
-	if (modbus_item) {
-		free_modbus_ht_item(modbus_item);
-	}
-	return matched;
+	   if (modbus_item)
+		   SCFree(modbus_item);
+	   return matched;
 }
 

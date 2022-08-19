@@ -99,11 +99,16 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
 			{
-				ics_adu->u.modbus = SCMalloc(sizeof(ics_modbus_t));
-				if (ics_adu->u.modbus == NULL)
+				ics_adu->audit.modbus = SCMalloc(sizeof(ics_modbus_t));
+				if (ics_adu->audit.modbus == NULL)
 					goto error;
-				memset(ics_adu->u.modbus, 0x00, sizeof(ics_modbus_t));
-				if (work_mode == ICS_MODE_WARNING) {
+				memset(ics_adu->audit.modbus, 0x00, sizeof(ics_modbus_t));
+				if (work_mode == ICS_MODE_STUDY) {
+					ics_adu->study.modbus = SCMalloc(sizeof(modbus_ht_item_t));
+					if (ics_adu->study.modbus == NULL)
+						goto error;
+					memset(ics_adu->study.modbus, 0x00, sizeof(modbus_ht_item_t));
+				} else if (work_mode == ICS_MODE_WARNING) {
 					ics_adu->warning.modbus = SCMalloc(sizeof(modbus_ht_item_t));
 					if (ics_adu->warning.modbus == NULL)
 						goto error;
@@ -113,11 +118,16 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 			break;
 		case ALPROTO_DNP3:
 			{
-				ics_adu->u.dnp3 = SCMalloc(sizeof(ics_dnp3_t));
-				if (ics_adu->u.dnp3 == NULL)
+				ics_adu->audit.dnp3 = SCMalloc(sizeof(ics_dnp3_t));
+				if (ics_adu->audit.dnp3 == NULL)
 					goto error;
-				memset(ics_adu->u.dnp3, 0x00, sizeof(ics_dnp3_t));
-				if (work_mode == ICS_MODE_WARNING) {
+				memset(ics_adu->audit.dnp3, 0x00, sizeof(ics_dnp3_t));
+				if (work_mode == ICS_MODE_STUDY) {
+					ics_adu->study.dnp3 = SCMalloc(sizeof(dnp3_ht_items_t));
+					if (ics_adu->study.dnp3 == NULL)
+						goto error;
+					memset(ics_adu->study.dnp3, 0x00, sizeof(dnp3_ht_items_t));
+				} else if (work_mode == ICS_MODE_WARNING) {
 					ics_adu->warning.dnp3 = SCMalloc(sizeof(dnp3_ht_item_t));
 					if (ics_adu->warning.dnp3 == NULL)
 						goto error;
@@ -127,11 +137,16 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 			break;
 		case ALPROTO_TRDP:
 			{
-				ics_adu->u.trdp = SCMalloc(sizeof(ics_trdp_t));
-				if (ics_adu->u.trdp == NULL)
+				ics_adu->audit.trdp = SCMalloc(sizeof(ics_trdp_t));
+				if (ics_adu->audit.trdp == NULL)
 					goto error;
-				memset(ics_adu->u.trdp, 0x00, sizeof(ics_trdp_t));
-				if (work_mode == ICS_MODE_WARNING) {
+				memset(ics_adu->audit.trdp, 0x00, sizeof(ics_trdp_t));
+				if (work_mode == ICS_MODE_STUDY) {
+					ics_adu->study.trdp = SCMalloc(sizeof(trdp_ht_item_t));
+					if (ics_adu->study.trdp == NULL)
+						goto error;
+					memset(ics_adu->study.trdp, 0x00, sizeof(trdp_ht_item_t));
+				} else if (work_mode == ICS_MODE_WARNING) {
 					ics_adu->warning.trdp = SCMalloc(sizeof(trdp_ht_item_t));
 					if (ics_adu->warning.trdp == NULL)
 						goto error;
@@ -158,23 +173,58 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 		goto out;
 	switch(proto) {
 		case ALPROTO_MODBUS:
-			if (ics_adu->u.modbus != NULL) {
-				SCFree(ics_adu->u.modbus);
-				ics_adu->u.modbus = NULL;
+			if (ics_adu->audit.modbus != NULL) {
+				SCFree(ics_adu->audit.modbus);
+				ics_adu->audit.modbus = NULL;
 			}
-			if (global_ics_work_mode == ICS_MODE_WARNING && ics_adu->warning.modbus != NULL) {
-				SCFree(ics_adu->warning.modbus);
-				ics_adu->warning.modbus = NULL;
+			if (global_ics_work_mode == ICS_MODE_STUDY) {
+				if (ics_adu->study.modbus != NULL) {
+					SCFree(ics_adu->study.modbus);
+					ics_adu->study.modbus = NULL;
+				}
+			} else if (global_ics_work_mode == ICS_MODE_WARNING) {
+				if (ics_adu->warning.modbus != NULL) {
+					SCFree(ics_adu->warning.modbus);
+					ics_adu->warning.modbus = NULL;
+				}
 			}
 			break;
 		case ALPROTO_DNP3:
-			if (ics_adu->u.dnp3 != NULL) {
-				SCFree(ics_adu->u.dnp3);
-				ics_adu->u.dnp3 = NULL;
+			if (ics_adu->audit.dnp3 != NULL) {
+				SCFree(ics_adu->audit.dnp3);
+				ics_adu->audit.dnp3 = NULL;
 			}
-			if (global_ics_work_mode == ICS_MODE_WARNING && ics_adu->warning.dnp3 != NULL) {
-				SCFree(ics_adu->warning.dnp3);
-				ics_adu->warning.dnp3 = NULL;
+			if (global_ics_work_mode == ICS_MODE_STUDY) {
+				if (ics_adu->study.dnp3 != NULL) {
+					if (ics_adu->study.dnp3->items != NULL) {
+						SCFree(ics_adu->study.dnp3->items);
+						ics_adu->study.dnp3->items = NULL;
+					}
+					SCFree(ics_adu->study.dnp3);
+					ics_adu->study.dnp3 = NULL;
+				}
+			} else if (global_ics_work_mode == ICS_MODE_WARNING) {
+				if (ics_adu->warning.dnp3 != NULL) {
+					SCFree(ics_adu->warning.dnp3);
+					ics_adu->warning.dnp3 = NULL;
+				}
+			}
+			break;
+		case ALPROTO_TRDP:
+			if (ics_adu->audit.trdp != NULL) {
+				SCFree(ics_adu->audit.trdp);
+				ics_adu->audit.trdp = NULL;
+			}
+			if (global_ics_work_mode == ICS_MODE_STUDY) {
+				if (ics_adu->study.trdp != NULL) {
+					SCFree(ics_adu->study.trdp);
+					ics_adu->study.trdp = NULL;
+				}
+			} else if (global_ics_work_mode == ICS_MODE_WARNING) {
+				if (ics_adu->warning.trdp != NULL) {
+					SCFree(ics_adu->warning.trdp);
+					ics_adu->warning.trdp = NULL;
+				}
 			}
 			break;
 		default:
@@ -192,29 +242,41 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
-			ret = detect_get_modbus_adu(p->flow, ics_adu->u.modbus);
+			ret = detect_get_modbus_audit_data(p, ics_adu->audit.modbus);
 			if (ret != TM_ECODE_OK)
 				goto out;
-			if (global_ics_work_mode == ICS_MODE_WARNING) {
-				if (match_modbus_ht_item(global_ics_hashtables[MODBUS].hashtable, p, ics_adu->u.modbus, ics_adu->warning.modbus) == 0)
+			if (ics_adu->work_mode == ICS_MODE_STUDY) {
+				ret = detect_get_modbus_study_data(p, ics_adu->audit.modbus, ics_adu->study.modbus);
+				if (ret != TM_ECODE_OK)
+					goto out;
+			} else if (ics_adu->work_mode == ICS_MODE_WARNING) {
+				if (detect_get_modbus_warning_data(global_ics_hashtables[MODBUS].hashtable, p, ics_adu->audit.modbus, ics_adu->warning.modbus) == 0)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
 		case ALPROTO_DNP3:
-			ret = detect_get_dnp3_adu(p->flow, ics_adu->u.dnp3);
+			ret = detect_get_dnp3_audit_data(p, ics_adu->audit.dnp3);
 			if (ret != TM_ECODE_OK)
 				goto out;
-			if (global_ics_work_mode == ICS_MODE_WARNING) {
-				if (match_dnp3_ht_item(global_ics_hashtables[DNP3].hashtable, p, ics_adu->u.dnp3, ics_adu->warning.dnp3) == 0)
+			if (ics_adu->work_mode == ICS_MODE_STUDY) {
+				ret = detect_get_dnp3_study_data(p, ics_adu->audit.dnp3, ics_adu->study.dnp3);
+				if (ret != TM_ECODE_OK)
+					goto out;
+			} else if (ics_adu->work_mode == ICS_MODE_WARNING) {
+				if (detect_get_dnp3_warning_data(global_ics_hashtables[DNP3].hashtable, p, ics_adu->audit.dnp3, ics_adu->warning.dnp3) == 0)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
 		case ALPROTO_TRDP:
-			ret = detect_get_trdp_adu(p->flow, ics_adu->u.trdp);
+			ret = detect_get_trdp_audit_data(p, ics_adu->audit.trdp);
 			if (ret != TM_ECODE_OK)
 				goto out;
-			if (global_ics_work_mode == ICS_MODE_WARNING) {
-				if (match_trdp_ht_item(global_ics_hashtables[TRDP].hashtable, p, ics_adu->u.trdp, ics_adu->warning.trdp) == 0)
+			if (ics_adu->work_mode == ICS_MODE_STUDY) {
+				ret = detect_get_trdp_study_data(p, ics_adu->audit.trdp, ics_adu->study.trdp);
+				if (ret != TM_ECODE_OK)
+					goto out;
+			} else if (ics_adu->work_mode == ICS_MODE_WARNING) {
+				if (detect_get_trdp_warning_data(global_ics_hashtables[TRDP].hashtable, p, ics_adu->audit.trdp, ics_adu->warning.trdp) == 0)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
@@ -236,11 +298,11 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 			p->flow->alproto == ALPROTO_TRDP) {
 			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow, global_ics_template_id);
 			if (ics_adu == NULL) {
-				SCLogNotice("create modbus adu error.\n");
+				SCLogNotice("create ics adu error.\n");
 				goto error;
 			}
 			if (detect_get_ics_adu(p, ics_adu) != TM_ECODE_OK) {
-				SCLogNotice("get modbus adu error.\n");
+				SCLogNotice("get ics adu error.\n");
 				goto error;
 			}
 			p->flow->ics_adu = (void *)ics_adu;

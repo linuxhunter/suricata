@@ -10,6 +10,32 @@
 
 #include "detect-ics-trdp.h"
 
+static trdp_ht_item_t* alloc_trdp_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
+	TRDP_Packet_Type_t packet_type, uint16_t protocol_version, uint16_t msg_type, uint32_t com_id)
+{
+	trdp_ht_item_t *trdp_item = NULL;
+
+	if ((trdp_item = SCMalloc(sizeof(trdp_ht_item_t))) == NULL) {
+		goto out;
+	}
+	trdp_item->sip = sip;
+	trdp_item->dip = dip;
+	trdp_item->proto = proto;
+	trdp_item->packet_type = packet_type;
+	trdp_item->protocol_version = protocol_version;
+	trdp_item->msg_type = msg_type;
+	trdp_item->com_id = com_id;
+out:
+	return trdp_item;
+}
+
+static void free_trdp_ht_item(trdp_ht_item_t *trdp_item)
+{
+	if (trdp_item)
+		SCFree(trdp_item);
+	return;
+}
+
 static void* get_trdp_tx(void *al_state, uint64_t tx_id)
 {
     TRDPState *trdp_state = (TRDPState *)al_state;
@@ -52,10 +78,10 @@ static void debug_output_trdp(ics_trdp_t *ics_trdp)
 }
 #endif
 
-int detect_get_trdp_adu(Flow *p, ics_trdp_t *ics_trdp)
+int detect_get_trdp_audit_data(Packet *p, ics_trdp_t *ics_trdp)
 {
 	int ret = TM_ECODE_OK;
-	TRDPState *trdp_state = p->alstate;
+	TRDPState *trdp_state = p->flow->alstate;
 	TRDPTransaction *tx = NULL;
 	uint64_t tx_count = 0;
 
@@ -76,30 +102,16 @@ out:
 	return ret;
 }
 
-static trdp_ht_item_t* alloc_trdp_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
-	TRDP_Packet_Type_t packet_type, uint16_t protocol_version, uint16_t msg_type, uint32_t com_id)
+int detect_get_trdp_study_data(Packet *p, ics_trdp_t *audit_trdp, trdp_ht_item_t *study_trdp)
 {
-	trdp_ht_item_t *trdp_item = NULL;
-
-	if ((trdp_item = SCMalloc(sizeof(trdp_ht_item_t))) == NULL) {
-		goto out;
-	}
-	trdp_item->sip = sip;
-	trdp_item->dip = dip;
-	trdp_item->proto = proto;
-	trdp_item->packet_type = packet_type;
-	trdp_item->protocol_version = protocol_version;
-	trdp_item->msg_type = msg_type;
-	trdp_item->com_id = com_id;
-out:
-	return trdp_item;
-}
-
-static void free_trdp_ht_item(trdp_ht_item_t *trdp_item)
-{
-	if (trdp_item)
-		SCFree(trdp_item);
-	return;
+	study_trdp->sip = GET_IPV4_SRC_ADDR_U32(p);
+	study_trdp->dip = GET_IPV4_DST_ADDR_U32(p);
+	study_trdp->proto = IP_GET_IPPROTO(p);
+	study_trdp->packet_type = audit_trdp->packet_type;
+	study_trdp->protocol_version = audit_trdp->u.pd.header.protocol_version;
+	study_trdp->msg_type = audit_trdp->u.pd.header.msg_type;
+	study_trdp->com_id = audit_trdp->u.pd.header.com_id;
+	return 0;
 }
 
 static uint32_t ics_trdp_hashfunc(HashTable *ht, void *data, uint16_t datalen)
@@ -229,7 +241,7 @@ static int __match_trdp_ht_item(HashTable *ht, trdp_ht_item_t *trdp_item)
 	return matched;
 }
 
-int match_trdp_ht_item(HashTable *ht, Packet *p, ics_trdp_t *trdp, trdp_ht_item_t *warning_data)
+int detect_get_trdp_warning_data(HashTable *ht, Packet *p, ics_trdp_t *audit_trdp, trdp_ht_item_t *warning_trdp)
 {
 	int matched = 0;
 	uint32_t sip, dip, com_id;
@@ -241,16 +253,16 @@ int match_trdp_ht_item(HashTable *ht, Packet *p, ics_trdp_t *trdp, trdp_ht_item_
 	sip = GET_IPV4_SRC_ADDR_U32(p);
 	dip = GET_IPV4_DST_ADDR_U32(p);
 	proto = IP_GET_IPPROTO(p);
-	packet_type = trdp->packet_type;
-	protocol_version = trdp->u.pd.header.protocol_version;
-	msg_type = trdp->u.pd.header.msg_type;
-	com_id = trdp->u.pd.header.com_id;
+	packet_type = audit_trdp->packet_type;
+	protocol_version = audit_trdp->u.pd.header.protocol_version;
+	msg_type = audit_trdp->u.pd.header.msg_type;
+	com_id = audit_trdp->u.pd.header.com_id;
 	if ((trdp_item = alloc_trdp_ht_item(sip, dip, proto, packet_type, protocol_version, msg_type, com_id)) == NULL) {
 		matched = 1;
 		goto out;
 	}
 	if (__match_trdp_ht_item(ht, trdp_item) == 0) {
-		memcpy(warning_data, trdp_item, sizeof(trdp_ht_item_t));
+		memcpy(warning_trdp, trdp_item, sizeof(trdp_ht_item_t));
 		goto out;
 	}
 	matched = 1;

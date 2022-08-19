@@ -141,6 +141,156 @@ static tlv_box_t* serialize_warning_common_data(const Packet *p, int template_id
 	return box;
 }
 
+#if 0
+static void debug_audit_modbus_data(ics_modbus_t *modbus)
+{
+	SCLogNotice("funcode = %u", modbus->funcode);
+	switch(modbus->funcode) {
+		case 1:
+		case 2:
+		case 3:
+		case 4:
+			SCLogNotice("address = %u, quantity = %u", modbus->u.addr_quan.address, modbus->u.addr_quan.quantity);
+			break;
+		case 5:
+		case 6:
+			SCLogNotice("address = %u, quantity = %u", modbus->u.addr_data.address, modbus->u.addr_data.data);
+			break;
+		case 8:
+			SCLogNotice("subfunction = %u", modbus->u.subfunc.subfunction);
+			break;
+		case 15:
+			SCLogNotice("address = %u, quantity = %u, data_len = %u, data = ", modbus->u.addr_quan_data.address, modbus->u.addr_quan_data.quantity, modbus->u.addr_quan_data.data_len);
+			for (uint32_t i = 0; i < modbus->u.addr_quan_data.data_len; i++)
+				SCLogNotice("%02x ", modbus->u.addr_quan_data.data[i]);
+			break;
+		case 16:
+			SCLogNotice("address = %u, quantity = %u", modbus->u.addr_quan.address, modbus->u.addr_quan.quantity);
+			break;
+		case 22:
+			SCLogNotice("and_mask = %u, or_mask = %u", modbus->u.and_or_mask.and_mask, modbus->u.and_or_mask.or_mask);
+			break;
+		case 23:
+			SCLogNotice("r_address = %u, r_quantity = %u, w_address = %u, w_quantity = %u",
+				modbus->u.rw_addr_quan.read_address, modbus->u.rw_addr_quan.read_quantity,
+				modbus->u.rw_addr_quan.write_address, modbus->u.rw_addr_quan.write_quantity);
+			break;
+		default:
+			break;
+	}
+}
+
+static void debug_audit_dnp3_data(ics_dnp3_t *dnp3)
+{
+	SCLogNotice("funcode = %u", dnp3->function_code);
+	SCLogNotice("object_count = %u", dnp3->object_count);
+	for (uint32_t i = 0; i < dnp3->object_count; i++) {
+		SCLogNotice("group[%d] = %u, variation[%d] = %u", i, dnp3->objects[i].group, i, dnp3->objects[i].variation);
+		if (dnp3->objects[i].point_count > 0) {
+			for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
+				SCLogNotice("group[%d] = %u, variation[%d] = %u, index[%d][%d] = %u, size[%d][%d] = %u",
+					i, dnp3->objects[i].group, i, dnp3->objects[i].variation, i, j, dnp3->objects[i].points[j].index, i, j, dnp3->objects[i].points[j].size);
+			}
+		} else {
+			SCLogNotice("group[%d] = %u, variation[%d] = %u, index[%d][0] = 0, size[%d][0] = 0",
+				i, dnp3->objects[i].group, i, dnp3->objects[i].variation, i ,i);
+		}
+	}
+}
+
+static void debug_audit_trdp_data(ics_trdp_t *trdp)
+{
+	SCLogNotice("packet_type = %s", (trdp->packet_type == PD_PDU) ? "PD" : "MD");
+	SCLogNotice("sequence_counter = %u", trdp->u.pd.header.sequence_counter);
+	SCLogNotice("protocol_version = %u", trdp->u.pd.header.protocol_version);
+	SCLogNotice("msg_type = %u", trdp->u.pd.header.msg_type);
+	SCLogNotice("com_id = %u", trdp->u.pd.header.com_id);
+	SCLogNotice("ebt_topo_cnt = %u", trdp->u.pd.header.ebt_topo_cnt);
+	SCLogNotice("op_trn_topo_cnt = %u", trdp->u.pd.header.op_trn_topo_cnt);
+	SCLogNotice("dataset_length = %u", trdp->u.pd.header.dataset_length);
+	SCLogNotice("reserved = %u", trdp->u.pd.header.reserved);
+	SCLogNotice("reply_com_id = %u", trdp->u.pd.header.reply_com_id);
+	SCLogNotice("reply_ip_address = %u", trdp->u.pd.header.reply_ip_address);
+	SCLogNotice("frame_checksum = 0x%x", trdp->u.pd.header.frame_checksum);
+	SCLogNotice("data = ");
+	for (uint32_t i = 0; i < trdp->u.pd.header.dataset_length; i++)
+		SCLogNotice("%02x", trdp->u.pd.data[i]);
+}
+
+static void debug_study_modbus_data(modbus_ht_item_t *modbus)
+{
+	SCLogNotice("sip = %u, dip = %u, proto = %u, funcode = %u, address = %x, quantity = %x",
+		modbus->sip,
+		modbus->dip,
+		modbus->proto,
+		modbus->funcode,
+		modbus->address,
+		modbus->quantity);
+}
+
+static void debug_study_dnp3_data(dnp3_ht_items_t *dnp3)
+{
+	SCLogNotice("dnp3_count = %u", dnp3->dnp3_ht_count);
+	for (uint32_t i = 0; i < dnp3->dnp3_ht_count; i++) {
+		SCLogNotice("sip = %u, dip = %u, proto = %u, group = %u, variation = %u, index = %u, size = %u",
+			dnp3->items[i].sip,
+			dnp3->items[i].dip,
+			dnp3->items[i].proto,
+			dnp3->items[i].group,
+			dnp3->items[i].variation,
+			dnp3->items[i].index,
+			dnp3->items[i].size);
+	}
+}
+
+static void debug_study_trdp_data(trdp_ht_item_t *trdp)
+{
+	SCLogNotice("sip = %u, dip = %u, proto = %u, packet_type = %u, protocol_version = %u, msg_type = %u, com_id = %u",
+		trdp->sip,
+		trdp->dip,
+		trdp->proto,
+		trdp->packet_type,
+		trdp->protocol_version,
+		trdp->msg_type,
+		trdp->com_id);
+}
+
+static void debug_warning_modbus_data(modbus_ht_item_t *modbus)
+{
+	SCLogNotice("sip = %u, dip = %u, proto = %u, funcode = %u, address = %x, quantity = %x",
+		modbus->sip,
+		modbus->dip,
+		modbus->proto,
+		modbus->funcode,
+		modbus->address,
+		modbus->quantity);
+}
+
+static void debug_warning_dnp3_data(dnp3_ht_item_t *dnp3)
+{
+	SCLogNotice("sip = %u, dip = %u, proto = %u, group = %u, variation = %u, index = %u, size = %u",
+		dnp3->sip,
+		dnp3->dip,
+		dnp3->proto,
+		dnp3->group,
+		dnp3->variation,
+		dnp3->index,
+		dnp3->size);
+}
+
+static void debug_warning_trdp_data(trdp_ht_item_t *trdp)
+{
+	SCLogNotice("sip = %u, dip = %u, proto = %u, packet_type = %u, protocol_version = %u, msg_type = %u, com_id = %u",
+		trdp->sip,
+		trdp->dip,
+		trdp->proto,
+		trdp->packet_type,
+		trdp->protocol_version,
+		trdp->msg_type,
+		trdp->com_id);
+}
+#endif
+
 static int serialize_audit_modbus_data(const Packet *p, int template_id, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	int ret = TM_ECODE_OK;
@@ -149,48 +299,7 @@ static int serialize_audit_modbus_data(const Packet *p, int template_id, ics_mod
 
 	box = serialize_audit_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, MODBUS);
-	tlv_box_put_uchar(box, MODBUS_FUNCODE, modbus->funcode);
-	switch(modbus->funcode) {
-		case 1:
-		case 2:
-		case 3:
-		case 4:
-			tlv_box_put_ushort(box, MODBUS_RADDR, modbus->u.addr_quan.address);
-			tlv_box_put_ushort(box, MODBUS_RQUANTITY, modbus->u.addr_quan.quantity);
-			break;
-		case 5:
-		case 6:
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.addr_data.address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, (uint16_t)1);
-			tlv_box_put_uchar(box, MODBUS_DATA_LEN, sizeof(uint16_t));
-			tlv_box_put_ushort(box, MODBUS_DATA, modbus->u.addr_data.data);
-			break;
-		case 8:
-			tlv_box_put_ushort(box, MODBUS_SUBFUNC, modbus->u.subfunc.subfunction);
-			break;
-		case 15:
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.addr_quan_data.address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, modbus->u.addr_quan_data.quantity);
-			tlv_box_put_uchar(box, MODBUS_DATA_LEN, modbus->u.addr_quan_data.data_len);
-			tlv_box_put_bytes(box, MODBUS_DATA, modbus->u.addr_quan_data.data, modbus->u.addr_quan_data.data_len);
-			break;
-		case 16:
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.addr_quan.address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, modbus->u.addr_quan.quantity);
-			break;
-		case 22:
-			tlv_box_put_ushort(box, MODBUS_AND_MASK, modbus->u.and_or_mask.and_mask);
-			tlv_box_put_ushort(box, MODBUS_OR_MASK, modbus->u.and_or_mask.or_mask);
-			break;
-		case 23:
-			tlv_box_put_ushort(box, MODBUS_RADDR, modbus->u.rw_addr_quan.read_address);
-			tlv_box_put_ushort(box, MODBUS_RQUANTITY, modbus->u.rw_addr_quan.read_quantity);
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.rw_addr_quan.write_address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, modbus->u.rw_addr_quan.write_quantity);
-			break;
-		default:
-			break;
-	}
+	tlv_box_put_bytes(box, MODBUS_AUDIT_DATA, (unsigned char *)modbus, sizeof(ics_modbus_t));
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -213,7 +322,7 @@ out:
 	return ret;
 }
 
-static int serialize_study_modbus_data(const Packet *p, int template_id, ics_modbus_t *modbus, uint8_t **study_data, int *study_data_len)
+static int serialize_study_modbus_data(const Packet *p, int template_id, modbus_ht_item_t *modbus, uint8_t **study_data, int *study_data_len)
 {
 	int ret = TM_ECODE_OK;
 	tlv_box_t *box = NULL;
@@ -221,37 +330,7 @@ static int serialize_study_modbus_data(const Packet *p, int template_id, ics_mod
 
 	box = serialize_study_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, MODBUS);
-	tlv_box_put_uchar(box, MODBUS_FUNCODE, modbus->funcode);
-	switch(modbus->funcode) {
-		case 1:
-		case 2:
-		case 3:
-		case 4:
-			tlv_box_put_ushort(box, MODBUS_RADDR, modbus->u.addr_quan.address);
-			tlv_box_put_ushort(box, MODBUS_RQUANTITY, modbus->u.addr_quan.quantity);
-			break;
-		case 5:
-		case 6:
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.addr_data.address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, (uint16_t)1);
-			break;
-		case 15:
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.addr_quan_data.address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, modbus->u.addr_quan_data.quantity);
-			break;
-		case 16:
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.addr_quan.address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, modbus->u.addr_quan.quantity);
-			break;
-		case 23:
-			tlv_box_put_ushort(box, MODBUS_RADDR, modbus->u.rw_addr_quan.read_address);
-			tlv_box_put_ushort(box, MODBUS_RQUANTITY, modbus->u.rw_addr_quan.read_quantity);
-			tlv_box_put_ushort(box, MODBUS_WADDR, modbus->u.rw_addr_quan.write_address);
-			tlv_box_put_ushort(box, MODBUS_WQUANTITY, modbus->u.rw_addr_quan.write_quantity);
-			break;
-		default:
-			break;
-	}
+	tlv_box_put_bytes(box, MODBUS_STUDY_DATA, (unsigned char *)modbus, sizeof(modbus_ht_item_t));
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -282,9 +361,7 @@ static int serialize_warning_modbus_data(const Packet *p, int template_id, modbu
 
 	box = serialize_warning_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, MODBUS);
-	tlv_box_put_uchar(box, MODBUS_FUNCODE, modbus->funcode);
-	tlv_box_put_ushort(box, MODBUS_RADDR, modbus->address);
-	tlv_box_put_ushort(box, MODBUS_RQUANTITY, modbus->quantity);
+	tlv_box_put_bytes(box, MODBUS_WARNING_DATA, (unsigned char *)modbus, sizeof(modbus_ht_item_t));
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -364,40 +441,37 @@ out:
 	return ret;
 }
 
-static int serialize_study_dnp3_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **study_data, int *study_data_len)
+static int serialize_study_dnp3_data(const Packet *p, int template_id, dnp3_ht_items_t *dnp3, uint8_t **study_data, int *study_data_len)
 {
 	int ret = TM_ECODE_OK;
 	tlv_box_t *box = NULL;
 	uint8_t *study_data_ptr = NULL;
 	MemBuffer *dnp3_object_buffer = NULL;
 
+	if (dnp3->dnp3_ht_count == 0) {
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
 	box = serialize_study_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
-	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->function_code);
-	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->object_count);
-	if (dnp3->object_count > 0) {
-		dnp3_object_buffer = MemBufferCreateNew(DNP3_OBJECT_BUFFER_LENGTH);
-		if (dnp3_object_buffer == NULL) {
-			SCLogNotice("create DNP3 Object MemBuffer error.\n");
-			ret = TM_ECODE_FAILED;
-			goto out;
-		}
-		for (uint32_t i = 0; i < dnp3->object_count; i++) {
-			if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint8_t)*2 + sizeof(uint32_t) >= MEMBUFFER_SIZE(dnp3_object_buffer))
-				MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
-			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].group, sizeof(uint8_t));
-			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].variation, sizeof(uint8_t));
-			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].point_count, sizeof(uint32_t));
-			for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
-				if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_object_buffer))
-					MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
-				MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].points[j].index, sizeof(uint32_t));
-				MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].points[j].size, sizeof(uint32_t));
-			}
-		}
-		tlv_box_put_bytes(box, DNP3_OBJECTS, MEMBUFFER_BUFFER(dnp3_object_buffer), MEMBUFFER_OFFSET(dnp3_object_buffer));
-		MemBufferFree(dnp3_object_buffer);
+	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->items[0].funcode);
+	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->dnp3_ht_count);
+	dnp3_object_buffer = MemBufferCreateNew(DNP3_OBJECT_BUFFER_LENGTH);
+	if (dnp3_object_buffer == NULL) {
+		SCLogNotice("create DNP3 Object MemBuffer error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
 	}
+	for (uint32_t i = 0; i < dnp3->dnp3_ht_count; i++) {
+		if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint8_t)*2 + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_object_buffer))
+			MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
+		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].group, sizeof(uint8_t));
+		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].variation, sizeof(uint8_t));
+		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].index, sizeof(uint32_t));
+		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].size, sizeof(uint32_t));
+	}
+	tlv_box_put_bytes(box, DNP3_OBJECTS, MEMBUFFER_BUFFER(dnp3_object_buffer), MEMBUFFER_OFFSET(dnp3_object_buffer));
+	MemBufferFree(dnp3_object_buffer);
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -428,11 +502,7 @@ static int serialize_warning_dnp3_data(const Packet *p, int template_id, dnp3_ht
 
 	box = serialize_warning_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
-	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->funcode);
-	tlv_box_put_uchar(box, DNP3_GROUP, dnp3->group);
-	tlv_box_put_uchar(box, DNP3_VARIATION, dnp3->variation);
-	tlv_box_put_uint(box, DNP3_INDEX, dnp3->index);
-	tlv_box_put_uint(box, DNP3_SIZE, dnp3->size);
+	tlv_box_put_bytes(box, DNP3_WARNING_DATA, (unsigned char *)dnp3, sizeof(dnp3_ht_item_t));
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -463,9 +533,7 @@ static int serialize_audit_trdp_data(const Packet *p, int template_id, ics_trdp_
 
 	box = serialize_audit_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, TRDP);
-	tlv_box_put_uchar(box, TRDP_PACKET_TYPE, trdp->packet_type);
-	tlv_box_put_bytes(box, TRDP_PACKET_HEADER, (unsigned char *)&trdp->u.pd.header, sizeof(trdp->u.pd.header));
-	tlv_box_put_bytes(box, TRDP_PACKET_DATA, trdp->u.pd.data, trdp->u.pd.header.dataset_length);
+	tlv_box_put_bytes(box, TRDP_AUDIT_DATA, (unsigned char *)trdp, sizeof(ics_trdp_t));
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -488,7 +556,7 @@ out:
 	return ret;
 }
 
-static int serialize_study_trdp_data(const Packet *p, int template_id, ics_trdp_t *trdp, uint8_t **study_data, int *study_data_len)
+static int serialize_study_trdp_data(const Packet *p, int template_id, trdp_ht_item_t *trdp, uint8_t **study_data, int *study_data_len)
 {
 	int ret = TM_ECODE_OK;
 	tlv_box_t *box = NULL;
@@ -496,8 +564,7 @@ static int serialize_study_trdp_data(const Packet *p, int template_id, ics_trdp_
 
 	box = serialize_study_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, TRDP);
-	tlv_box_put_uchar(box, TRDP_PACKET_TYPE, trdp->packet_type);
-	tlv_box_put_bytes(box, TRDP_PACKET_HEADER, (unsigned char *)&trdp->u.pd.header, sizeof(trdp->u.pd.header));
+	tlv_box_put_bytes(box, TRDP_STUDY_DATA, (unsigned char *)trdp, sizeof(trdp_ht_item_t));
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -557,7 +624,7 @@ static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
 }
 
-static int create_modbus_study_data(const Packet *p, int template_id, ics_modbus_t *modbus, uint8_t **study_data, int *study_data_len)
+static int create_modbus_study_data(const Packet *p, int template_id, modbus_ht_item_t *modbus, uint8_t **study_data, int *study_data_len)
 {
 	return serialize_study_modbus_data(p, template_id, modbus, study_data, study_data_len);
 }
@@ -572,7 +639,7 @@ static int create_dnp3_audit_data(const Packet *p, ics_dnp3_t *dnp3, uint8_t **a
 	return serialize_audit_dnp3_data(p, 0, dnp3, audit_data, audit_data_len);
 }
 
-static int create_dnp3_study_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **study_data, int *study_data_len)
+static int create_dnp3_study_data(const Packet *p, int template_id, dnp3_ht_items_t *dnp3, uint8_t **study_data, int *study_data_len)
 {
 	return serialize_study_dnp3_data(p, template_id, dnp3, study_data, study_data_len);
 }
@@ -587,7 +654,7 @@ static int create_trdp_audit_data(const Packet *p, ics_trdp_t *trdp, uint8_t **a
 	return serialize_audit_trdp_data(p, 0, trdp, audit_data, audit_data_len);
 }
 
-static int create_trdp_study_data(const Packet *p, int template_id, ics_trdp_t *trdp, uint8_t **study_data, int *study_data_len)
+static int create_trdp_study_data(const Packet *p, int template_id, trdp_ht_item_t *trdp, uint8_t **study_data, int *study_data_len)
 {
 	return serialize_study_trdp_data(p, template_id, trdp, study_data, study_data_len);
 }
@@ -611,13 +678,13 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 	ics_adu = p->flow->ics_adu;
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
-			ret = create_modbus_audit_data(p, ics_adu->u.modbus, &audit_data, &audit_data_len);
+			ret = create_modbus_audit_data(p, ics_adu->audit.modbus, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			switch(ics_adu->work_mode) {
 				case ICS_MODE_STUDY:
-					ret = create_modbus_study_data(p, ics_adu->template_id, ics_adu->u.modbus, &study_data, &study_data_len);
+					ret = create_modbus_study_data(p, ics_adu->template_id, ics_adu->study.modbus, &study_data, &study_data_len);
 					if (ret != TM_ECODE_OK)
 						goto out;
 					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
@@ -635,13 +702,13 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			}
 			break;
 		case ALPROTO_DNP3:
-			ret = create_dnp3_audit_data(p, ics_adu->u.dnp3, &audit_data, &audit_data_len);
+			ret = create_dnp3_audit_data(p, ics_adu->audit.dnp3, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			switch(ics_adu->work_mode) {
 				case ICS_MODE_STUDY:
-					ret = create_dnp3_study_data(p, ics_adu->template_id, ics_adu->u.dnp3, &study_data, &study_data_len);
+					ret = create_dnp3_study_data(p, ics_adu->template_id, ics_adu->study.dnp3, &study_data, &study_data_len);
 					if (ret != TM_ECODE_OK)
 						goto out;
 					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
@@ -659,13 +726,13 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			}
 			break;
 		case ALPROTO_TRDP:
-			ret = create_trdp_audit_data(p, ics_adu->u.trdp, &audit_data, &audit_data_len);
+			ret = create_trdp_audit_data(p, ics_adu->audit.trdp, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			switch(ics_adu->work_mode) {
 				case ICS_MODE_STUDY:
-					ret = create_trdp_study_data(p, ics_adu->template_id, ics_adu->u.trdp, &study_data, &study_data_len);
+					ret = create_trdp_study_data(p, ics_adu->template_id, ics_adu->study.trdp, &study_data, &study_data_len);
 					if (ret != TM_ECODE_OK)
 						goto out;
 					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);

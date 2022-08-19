@@ -40,13 +40,14 @@ typedef struct {
 	uint32_t dip;
 	uint8_t proto;
 	uint8_t funcode;
-	uint16_t address;
-	uint16_t quantity;
+	uint32_t address;
+	uint32_t quantity;
 } modbus_ht_item_t;
 
-int detect_get_modbus_adu(Flow *p, ics_modbus_t *ics_modbus);
+int detect_get_modbus_audit_data(Packet *p, ics_modbus_t *audit_modbus);
+int detect_get_modbus_study_data(Packet *p, ics_modbus_t *audit_modbus, modbus_ht_item_t *study_modbus);
+int detect_get_modbus_warning_data(HashTable *ht, Packet *p, ics_modbus_t *audit_modbus, modbus_ht_item_t *warning_modbus);
 int init_modbus_hashtable(HashTable **ht, uint32_t size);
 int create_modbus_hashtable(HashTable *ht, intmax_t template_id);
-int match_modbus_ht_item(HashTable *ht, Packet *p, ics_modbus_t *modbus, modbus_ht_item_t *warning_data);
 
 #endif

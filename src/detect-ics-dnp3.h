@@ -30,7 +30,14 @@ typedef struct {
 	uint32_t size;
 } dnp3_ht_item_t;
 
-int detect_get_dnp3_adu(Flow *p, ics_dnp3_t *ics_dnp3);
+typedef struct {
+	uint32_t dnp3_ht_count;
+	dnp3_ht_item_t *items;
+} dnp3_ht_items_t;
+
+int detect_get_dnp3_audit_data(Packet *p, ics_dnp3_t *audit_dnp3);
+int detect_get_dnp3_study_data(Packet *p, ics_dnp3_t *audit_dnp3, dnp3_ht_items_t *study_dnp3);
+int detect_get_dnp3_warning_data(HashTable *ht, Packet *p, ics_dnp3_t *audit_dnp3, dnp3_ht_item_t *warning_dnp3);
 int init_dnp3_hashtable(HashTable **ht, uint32_t size);
 int create_dnp3_hashtable(HashTable *ht, intmax_t template_id);
 int match_dnp3_ht_item(HashTable *ht, Packet *p, ics_dnp3_t *dnp3, dnp3_ht_item_t *warning_data);

@@ -14,8 +14,9 @@ typedef struct {
 	uint32_t com_id;
 } trdp_ht_item_t;
 
-int detect_get_trdp_adu(Flow *p, ics_trdp_t *ics_trdp);
+int detect_get_trdp_audit_data(Packet *p, ics_trdp_t *ics_trdp);
+int detect_get_trdp_study_data(Packet *p, ics_trdp_t *audit_trdp, trdp_ht_item_t *study_trdp);
 int init_trdp_hashtable(HashTable **ht, uint32_t size);
 int create_trdp_hashtable(HashTable *ht, intmax_t template_id);
-int match_trdp_ht_item(HashTable *ht, Packet *p, ics_trdp_t *trdp, trdp_ht_item_t *warning_data);
+int detect_get_trdp_warning_data(HashTable *ht, Packet *p, ics_trdp_t *trdp, trdp_ht_item_t *warning_data);
 #endif
