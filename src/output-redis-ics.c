@@ -384,41 +384,41 @@ out:
 	return ret;
 }
 
-#define DNP3_OBJECT_BUFFER_LENGTH	1024
+#define DNP3_DATA_BUFFER_LENGTH		2048
 static int serialize_audit_dnp3_data(const Packet *p, int template_id, ics_dnp3_t *dnp3, uint8_t **audit_data, int *audit_data_len)
 {
 	int ret = TM_ECODE_OK;
 	tlv_box_t *box = NULL;
 	uint8_t *audit_data_ptr = NULL;
-	MemBuffer *dnp3_object_buffer = NULL;
+	MemBuffer *dnp3_data_buffer = NULL;
 
 	box = serialize_audit_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
-	tlv_box_put_uchar(box, DNP3_FUNCODE, dnp3->function_code);
-	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->object_count);
+	dnp3_data_buffer = MemBufferCreateNew(DNP3_DATA_BUFFER_LENGTH);
+	if (dnp3_data_buffer == NULL) {
+		SCLogNotice("create DNP3 Data MemBuffer error.");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	MemBufferWriteRaw(dnp3_data_buffer, &dnp3->function_code, sizeof(uint8_t));
+	MemBufferWriteRaw(dnp3_data_buffer, &dnp3->object_count, sizeof(uint32_t));
 	if (dnp3->object_count > 0) {
-		dnp3_object_buffer = MemBufferCreateNew(DNP3_OBJECT_BUFFER_LENGTH);
-		if (dnp3_object_buffer == NULL) {
-			SCLogNotice("create DNP3 Object MemBuffer error.\n");
-			ret = TM_ECODE_FAILED;
-			goto out;
-		}
 		for (uint32_t i = 0; i < dnp3->object_count; i++) {
-			if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint8_t)*2 + sizeof(uint32_t) >= MEMBUFFER_SIZE(dnp3_object_buffer))
-				MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
-			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].group, sizeof(uint8_t));
-			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].variation, sizeof(uint8_t));
-			MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].point_count, sizeof(uint32_t));
+			if (MEMBUFFER_OFFSET(dnp3_data_buffer) + sizeof(uint8_t)*2 + sizeof(uint32_t) >= MEMBUFFER_SIZE(dnp3_data_buffer))
+				MemBufferExpand(&dnp3_data_buffer, DNP3_DATA_BUFFER_LENGTH);
+			MemBufferWriteRaw(dnp3_data_buffer, &dnp3->objects[i].group, sizeof(uint8_t));
+			MemBufferWriteRaw(dnp3_data_buffer, &dnp3->objects[i].variation, sizeof(uint8_t));
+			MemBufferWriteRaw(dnp3_data_buffer, &dnp3->objects[i].point_count, sizeof(uint32_t));
 			for (uint32_t j = 0; j < dnp3->objects[i].point_count; j++) {
-				if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_object_buffer))
-					MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
-				MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].points[j].index, sizeof(uint32_t));
-				MemBufferWriteRaw(dnp3_object_buffer, &dnp3->objects[i].points[j].size, sizeof(uint32_t));
+				if (MEMBUFFER_OFFSET(dnp3_data_buffer) + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_data_buffer))
+					MemBufferExpand(&dnp3_data_buffer, DNP3_DATA_BUFFER_LENGTH);
+				MemBufferWriteRaw(dnp3_data_buffer, &dnp3->objects[i].points[j].index, sizeof(uint32_t));
+				MemBufferWriteRaw(dnp3_data_buffer, &dnp3->objects[i].points[j].size, sizeof(uint32_t));
 			}
 		}
-		tlv_box_put_bytes(box, DNP3_OBJECTS, MEMBUFFER_BUFFER(dnp3_object_buffer), MEMBUFFER_OFFSET(dnp3_object_buffer));
-		MemBufferFree(dnp3_object_buffer);
 	}
+	tlv_box_put_bytes(box, DNP3_AUDIT_DATA, MEMBUFFER_BUFFER(dnp3_data_buffer), MEMBUFFER_OFFSET(dnp3_data_buffer));
+	MemBufferFree(dnp3_data_buffer);
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
@@ -446,7 +446,7 @@ static int serialize_study_dnp3_data(const Packet *p, int template_id, dnp3_ht_i
 	int ret = TM_ECODE_OK;
 	tlv_box_t *box = NULL;
 	uint8_t *study_data_ptr = NULL;
-	MemBuffer *dnp3_object_buffer = NULL;
+	MemBuffer *dnp3_data_buffer = NULL;
 
 	if (dnp3->dnp3_ht_count == 0) {
 		ret = TM_ECODE_FAILED;
@@ -454,24 +454,24 @@ static int serialize_study_dnp3_data(const Packet *p, int template_id, dnp3_ht_i
 	}
 	box = serialize_study_common_data(p, template_id);
 	tlv_box_put_uchar(box, APP_PROTO, DNP3);
-	tlv_box_put_uint(box, DNP3_OBJECT_COUNTS, dnp3->dnp3_ht_count);
-	dnp3_object_buffer = MemBufferCreateNew(DNP3_OBJECT_BUFFER_LENGTH);
-	if (dnp3_object_buffer == NULL) {
-		SCLogNotice("create DNP3 Object MemBuffer error.\n");
+	dnp3_data_buffer = MemBufferCreateNew(DNP3_DATA_BUFFER_LENGTH);
+	if (dnp3_data_buffer == NULL) {
+		SCLogNotice("create DNP3 Data MemBuffer error.\n");
 		ret = TM_ECODE_FAILED;
 		goto out;
 	}
+	MemBufferWriteRaw(dnp3_data_buffer, &dnp3->dnp3_ht_count, sizeof(uint32_t));
 	for (uint32_t i = 0; i < dnp3->dnp3_ht_count; i++) {
-		if (MEMBUFFER_OFFSET(dnp3_object_buffer) + sizeof(uint8_t)*3 + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_object_buffer))
-			MemBufferExpand(&dnp3_object_buffer, DNP3_OBJECT_BUFFER_LENGTH);
-		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].funcode, sizeof(uint8_t));
-		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].group, sizeof(uint8_t));
-		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].variation, sizeof(uint8_t));
-		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].index, sizeof(uint32_t));
-		MemBufferWriteRaw(dnp3_object_buffer, &dnp3->items[i].size, sizeof(uint32_t));
+		if (MEMBUFFER_OFFSET(dnp3_data_buffer) + sizeof(uint8_t)*3 + sizeof(uint32_t)*2 >= MEMBUFFER_SIZE(dnp3_data_buffer))
+			MemBufferExpand(&dnp3_data_buffer, DNP3_DATA_BUFFER_LENGTH);
+		MemBufferWriteRaw(dnp3_data_buffer, &dnp3->items[i].funcode, sizeof(uint8_t));
+		MemBufferWriteRaw(dnp3_data_buffer, &dnp3->items[i].group, sizeof(uint8_t));
+		MemBufferWriteRaw(dnp3_data_buffer, &dnp3->items[i].variation, sizeof(uint8_t));
+		MemBufferWriteRaw(dnp3_data_buffer, &dnp3->items[i].index, sizeof(uint32_t));
+		MemBufferWriteRaw(dnp3_data_buffer, &dnp3->items[i].size, sizeof(uint32_t));
 	}
-	tlv_box_put_bytes(box, DNP3_OBJECTS, MEMBUFFER_BUFFER(dnp3_object_buffer), MEMBUFFER_OFFSET(dnp3_object_buffer));
-	MemBufferFree(dnp3_object_buffer);
+	tlv_box_put_bytes(box, DNP3_STUDY_DATA, MEMBUFFER_BUFFER(dnp3_data_buffer), MEMBUFFER_OFFSET(dnp3_data_buffer));
+	MemBufferFree(dnp3_data_buffer);
 	if (tlv_box_serialize(box)) {
 		SCLogNotice("tlv box serialized failed.\n");
 		ret = TM_ECODE_FAILED;
