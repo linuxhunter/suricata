@@ -354,6 +354,7 @@ noinst_HEADERS = \
 	detect-ics-modbus.h \
 	detect-ics-dnp3.h \
 	detect-ics-trdp.h \
+	detect-ics-http1.h \
 	device-storage.h \
 	feature.h \
 	flow-bit.h \
@@ -957,6 +958,7 @@ libsuricata_c_a_SOURCES = \
 	detect-ics-modbus.c \
 	detect-ics-dnp3.c \
 	detect-ics-trdp.c \
+	detect-ics-http1.c \
 	device-storage.c \
 	feature.c \
 	flow-bit.c \

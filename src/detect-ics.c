@@ -91,7 +91,8 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 		goto error;
 	if (f->alproto != ALPROTO_MODBUS &&
 		f->alproto != ALPROTO_DNP3 &&
-		f->alproto != ALPROTO_TRDP)
+		f->alproto != ALPROTO_TRDP &&
+		f->alproto != ALPROTO_HTTP1)
 		goto error;
 	ics_adu->work_mode = work_mode;
 	ics_adu->proto = f->alproto;
@@ -152,6 +153,14 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 						goto error;
 					memset(ics_adu->warning.trdp, 0x00, sizeof(trdp_ht_item_t));
 				}
+			}
+			break;
+		case ALPROTO_HTTP1:
+			{
+				ics_adu->audit.http1 = SCMalloc(sizeof(ics_http1_t));
+				if (ics_adu->audit.http1 == NULL)
+					goto error;
+				memset(ics_adu->audit.http1, 0x00, sizeof(ics_http1_t));
 			}
 			break;
 		default:
@@ -227,6 +236,16 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 				}
 			}
 			break;
+		case ALPROTO_HTTP1:
+			if (ics_adu->audit.http1 != NULL) {
+				if (ics_adu->audit.http1->http_uri != NULL) {
+					SCFree(ics_adu->audit.http1->http_uri);
+					ics_adu->audit.http1->http_uri = NULL;
+				}
+				SCFree(ics_adu->audit.http1);
+				ics_adu->audit.http1 = NULL;
+			}
+			break;
 		default:
 			break;
 	}
@@ -280,6 +299,11 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
+		case ALPROTO_HTTP1:
+			ret = detect_get_http1_audit_data(p, ics_adu->audit.http1);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			break;
 		default:
 			ret = TM_ECODE_FAILED;
 			goto out;
@@ -292,10 +316,15 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 {
 	ics_adu_t *ics_adu = NULL;
 
+	if (p->payload_len == 0) {
+		SCLogNotice("packet payload len is zero.");
+		goto error;
+	}
 	if (p->flow && (p->flowflags & FLOW_PKT_TOSERVER)) {
 		if (p->flow->alproto == ALPROTO_MODBUS ||
 			p->flow->alproto == ALPROTO_DNP3 ||
-			p->flow->alproto == ALPROTO_TRDP) {
+			p->flow->alproto == ALPROTO_TRDP ||
+			p->flow->alproto == ALPROTO_HTTP1) {
 			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow, global_ics_template_id);
 			if (ics_adu == NULL) {
 				SCLogNotice("create ics adu error.\n");

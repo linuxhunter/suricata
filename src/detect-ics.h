@@ -5,6 +5,7 @@
 #include "detect-ics-modbus.h"
 #include "detect-ics-dnp3.h"
 #include "detect-ics-trdp.h"
+#include "detect-ics-http1.h"
 
 typedef enum {
     ICS_MODE_MIN = 0,
@@ -18,6 +19,7 @@ typedef enum {
     MODBUS = 0,
     DNP3,
     TRDP,
+    HTTP1,
     ICS_PROTO_MAX,
 } ics_proto_t;
 
@@ -31,6 +33,7 @@ typedef struct {
 		ics_modbus_t *modbus;
 		ics_dnp3_t *dnp3;
 		ics_trdp_t *trdp;
+		ics_http1_t *http1;
 	}audit;
 	union {
 		modbus_ht_item_t *modbus;

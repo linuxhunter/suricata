@@ -619,6 +619,41 @@ out:
 	return ret;
 }
 
+static int serialize_audit_http1_data(const Packet *p, int template_id, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *audit_data_ptr = NULL;
+
+	if (http1->http_uri == NULL) {
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	box = serialize_audit_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, HTTP1);
+	tlv_box_put_bytes(box, HTTP1_AUDIT_DATA, (unsigned char *)http1->http_uri, http1->http_uri_len);
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*audit_data_len = tlv_box_get_size(box);
+	if ((*audit_data = SCMalloc(*audit_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*audit_data, 0x00, *audit_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*audit_data), *audit_data_len, "%d:", *audit_data_len);
+	audit_data_ptr = (uint8_t *)strchr((char *)(*audit_data), ':');
+	audit_data_ptr++;
+	memcpy(audit_data_ptr, tlv_box_get_buffer(box), *audit_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
@@ -662,6 +697,11 @@ static int create_trdp_study_data(const Packet *p, int template_id, trdp_ht_item
 static int create_trdp_warning_data(const Packet *p, int template_id, trdp_ht_item_t *trdp, uint8_t **warning_data, int *warning_data_len)
 {
 	return serialize_warning_trdp_data(p, template_id, trdp, warning_data, warning_data_len);
+}
+
+static int create_http1_audit_data(const Packet *p, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
+{
+	return serialize_audit_http1_data(p, 0, http1, audit_data, audit_data_len);
 }
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
@@ -749,6 +789,12 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 					break;
 			}
 			break;
+		case ALPROTO_HTTP1:
+			ret = create_http1_audit_data(p, ics_adu->audit.http1, &audit_data, &audit_data_len);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
+			break;
 		default:
 			goto out;
 	}
@@ -782,6 +828,11 @@ int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p)
 		case ALPROTO_TRDP:
 			if (p->flowflags & FLOW_PKT_TOSERVER)
 				ret = TRUE;
+			break;
+		case ALPROTO_HTTP1:
+			if (p->flowflags & FLOW_PKT_TOSERVER)
+				ret = TRUE;
+			break;
 		default:
 			break;
 	}

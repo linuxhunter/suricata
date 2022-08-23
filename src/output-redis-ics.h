@@ -35,6 +35,7 @@ typedef enum {
 	TRDP_AUDIT_DATA,
 	TRDP_STUDY_DATA,
 	TRDP_WARNING_DATA,
+	HTTP1_AUDIT_DATA,
 	END,
 } ics_tlv_type_t;
 
