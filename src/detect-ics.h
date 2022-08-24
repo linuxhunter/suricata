@@ -22,6 +22,7 @@ typedef enum {
 	TRDP,
 	HTTP1,
 	FTP,
+	FTPDATA,
 	ICS_PROTO_MAX,
 } ics_proto_t;
 

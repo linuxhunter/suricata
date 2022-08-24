@@ -39,25 +39,57 @@ static uint64_t FTPGetTxCnt(void *state)
 	return cnt;
 }
 
+static void *FTPDataGetTx(void *state, uint64_t tx_id)
+{
+	FtpDataState *ftp_state = (FtpDataState *)state;
+	return ftp_state;
+}
+
+static uint64_t FTPDataGetTxCnt(void *state)
+{
+	/* ftp-data is single tx */
+	return 1;
+}
+
 int detect_get_ftp_audit_data(Packet *p, ics_ftp_t *ics_ftp)
 {
 	int ret = TM_ECODE_OK;
 	uint64_t tx_count;
 
-	tx_count = FTPGetTxCnt(p->flow->alstate);
-	FTPTransaction *tx = FTPGetTx(p->flow->alstate, tx_count-1);
-	if (tx != NULL) {
-		if (tx->command_descriptor == NULL) {
-			ret = TM_ECODE_FAILED;
-			goto out;
+	if (p->flow->alproto == ALPROTO_FTP) {
+		tx_count = FTPGetTxCnt(p->flow->alstate);
+		FTPTransaction *tx = FTPGetTx(p->flow->alstate, tx_count-1);
+		if (tx != NULL) {
+			if (tx->command_descriptor == NULL) {
+				ret = TM_ECODE_FAILED;
+				goto out;
+			}
+			if ((ics_ftp->command = SCMalloc(tx->command_descriptor->command_length+1)) == NULL) {
+				ret = TM_ECODE_FAILED;
+				goto out;
+			}
+			memset(ics_ftp->command, 0x00, tx->command_descriptor->command_length+1);
+			memcpy(ics_ftp->command, tx->command_descriptor->command_name, tx->command_descriptor->command_length);
+			ics_ftp->command_length = tx->command_descriptor->command_length;
 		}
-		if ((ics_ftp->command = SCMalloc(tx->command_descriptor->command_length+1)) == NULL) {
-			ret = TM_ECODE_FAILED;
-			goto out;
+	} else if (p->flow->alproto == ALPROTO_FTPDATA) {
+		tx_count = FTPDataGetTxCnt(p->flow->alstate);
+		FtpDataState *ftp_state = FTPDataGetTx(p->flow->alstate, tx_count-1);
+		if (ftp_state != NULL) {
+			if (ftp_state->command <= FTP_COMMAND_UNKNOWN || ftp_state->command >= FTP_COMMAND_MAX) {
+				ret = TM_ECODE_FAILED;
+				goto out;
+			}
+			uint8_t command_length;
+			command_length = FtpCommands[ftp_state->command].command_length;
+			if ((ics_ftp->command = SCMalloc(command_length+1)) == NULL) {
+				ret = TM_ECODE_FAILED;
+				goto out;
+			}
+			memset(ics_ftp->command, 0x00, command_length+1);
+			memcpy(ics_ftp->command, FtpCommands[ftp_state->command].command_name, command_length);
+			ics_ftp->command_length = command_length;
 		}
-		memset(ics_ftp->command, 0x00, tx->command_descriptor->command_length+1);
-		memcpy(ics_ftp->command, tx->command_descriptor->command_name, tx->command_descriptor->command_length);
-		ics_ftp->command_length = tx->command_descriptor->command_length;
 	}
 out:
 	return ret;

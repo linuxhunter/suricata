@@ -850,6 +850,7 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			break;
 		case ALPROTO_FTP:
+		case ALPROTO_FTPDATA:
 			ret = create_ftp_audit_data(p, ics_adu->audit.ftp, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
@@ -882,6 +883,7 @@ int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p)
 		case ALPROTO_TRDP:
 		case ALPROTO_HTTP1:
 		case ALPROTO_FTP:
+		case ALPROTO_FTPDATA:
 			if (p->flowflags & FLOW_PKT_TOSERVER)
 				ret = TRUE;
 			break;
