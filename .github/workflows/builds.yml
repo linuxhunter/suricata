@@ -27,10 +27,10 @@ env:
   # A recent version of stable Rust that is known to pass build, test and other
   # verification steps in this workflow. This was added because using "stable"
   # could cause some steps to fail.
-  RUST_VERSION_KNOWN: "1.58.1"
+  RUST_VERSION_KNOWN: "1.62.0"
 
   # The minimum version of Rust supported.
-  RUST_VERSION_MIN: "1.48"
+  RUST_VERSION_MIN: "1.58.1"
 
 jobs:
 
@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo
           key: cargo
@@ -123,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo
           key: cbindgen
@@ -142,6 +142,114 @@ jobs:
           name: prep
           path: .
 
+  almalinux-9:
+    name: AlmaLinux 9
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    needs: [prepare-deps, prepare-cbindgen]
+    steps:
+      # Cache Rust stuff.
+      - name: Cache cargo registry
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+
+      # Download and extract dependency archives created during prep
+      # job.
+      - uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741
+        with:
+          name: prep
+          path: prep
+      - run: tar xvf prep/libhtp.tar.gz
+      - run: tar xvf prep/suricata-update.tar.gz
+      - run: tar xvf prep/suricata-verify.tar.gz
+      - name: Setup cbindgen
+        run: |
+          mkdir -p $HOME/.cargo/bin
+          cp prep/cbindgen $HOME/.cargo/bin
+          chmod 755 $HOME/.cargo/bin/cbindgen
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install system packages
+        run: |
+          dnf -y install dnf-plugins-core
+          dnf config-manager --set-enabled crb
+          dnf -y install \
+                autoconf \
+                automake \
+                cargo-vendor \
+                diffutils \
+                numactl-devel \
+                dpdk-devel \
+                file-devel \
+                gcc \
+                gcc-c++ \
+                git \
+                jansson-devel \
+                jq \
+                lua-devel \
+                libtool \
+                libyaml-devel \
+                libnfnetlink-devel \
+                libnetfilter_queue-devel \
+                libnet-devel \
+                libcap-ng-devel \
+                libevent-devel \
+                libmaxminddb-devel \
+                libpcap-devel \
+                libtool \
+                lz4-devel \
+                make \
+                nss-devel \
+                pcre2-devel \
+                pkgconfig \
+                python3-devel \
+                python3-sphinx \
+                python3-yaml \
+                rust-toolset \
+                sudo \
+                which \
+                zlib-devel
+          # These packages required to build the PDF.
+          dnf -y install \
+                texlive-latex \
+                texlive-cmap \
+                texlive-collection-latexrecommended \
+                texlive-fncychap \
+                texlive-titlesec \
+                texlive-tabulary \
+                texlive-framed \
+                texlive-wrapfig \
+                texlive-upquote \
+                texlive-capt-of \
+                texlive-needspace
+      - name: Setup cppclean
+        run: |
+          git clone --depth 1 --branch suricata https://github.com/catenacyber/cppclean
+          cd cppclean
+          python3 setup.py install
+      - name: Configuring
+        run: |
+          ./autogen.sh
+          CFLAGS="${DEFAULT_CFLAGS}" ./configure
+      - run: make -j2 distcheck
+        env:
+          DISTCHECK_CONFIGURE_FLAGS: "--enable-unittests --enable-debug --enable-lua --enable-geoip --enable-profiling --enable-profiling-locks --enable-dpdk"
+      - run: test -e doc/userguide/suricata.1
+      - name: Checking includes
+        run: |
+          cppclean src/*.h | grep "does not need to be #included" | python3 scripts/cppclean_check.py
+      - name: Building Rust documentation
+        run: make doc
+        working-directory: rust
+      - run: make install
+      - run: suricatasc -h
+      - run: suricata-update -V
+
+  # This build also creates the distribution package that some other builds
+  # depend on.
   alma-8:
     name: AlmaLinux 8
     runs-on: ubuntu-latest
@@ -150,7 +258,7 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -233,7 +341,7 @@ jobs:
                 texlive-wrapfig \
                 texlive-upquote \
                 texlive-capt-of \
-                texlive-needspace \
+                texlive-needspace
       - name: Setup cppclean
         run: |
           git clone --depth 1 --branch suricata https://github.com/catenacyber/cppclean
@@ -253,6 +361,9 @@ jobs:
       - name: Building Rust documentation
         run: make doc
         working-directory: rust
+      - run: make install
+      - run: suricatasc -h
+      - run: suricata-update -V
       - name: Preparing distribution
         run: |
           mkdir dist
@@ -326,6 +437,8 @@ jobs:
           path: prep
       - run: tar xf prep/suricata-verify.tar.gz
       - run: python3 ./suricata-verify/run.py -q
+      - run: suricata-update -V
+      - run: suricatasc -h
 
   fedora-36:
     name: Fedora 36 (debug, clang, asan, wshadow, rust-strict)
@@ -336,7 +449,7 @@ jobs:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -383,6 +496,7 @@ jobs:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
+      - run: tar xf prep/suricata-update.tar.gz
       - name: Setup cbindgen
         run: |
           mkdir -p $HOME/.cargo/bin
@@ -413,6 +527,9 @@ jobs:
       - run: test -e /usr/local/lib/libsuricata_rust.a
       - run: test -e /usr/local/bin/libsuricata-config
       - run: test ! -e /usr/local/lib/libsuricata.so
+      - run: make install
+      - run: suricata-update -V
+      - run: suricatasc -h
 
   fedora-35:
     name: Fedora 35 (debug, clang, asan, wshadow, rust-strict)
@@ -423,7 +540,7 @@ jobs:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -470,6 +587,7 @@ jobs:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
+      - run: tar xf prep/suricata-update.tar.gz
       - name: Setup cbindgen
         run: |
           mkdir -p $HOME/.cargo/bin
@@ -500,6 +618,9 @@ jobs:
       - run: test -e /usr/local/lib/libsuricata_rust.a
       - run: test -e /usr/local/bin/libsuricata-config
       - run: test ! -e /usr/local/lib/libsuricata.so
+      - run: make install
+      - run: suricata-update -V
+      - run: suricatasc -h
 
   fedora-35-no-jansson:
     name: Fedora 35 (no jansson)
@@ -510,7 +631,7 @@ jobs:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -857,6 +978,7 @@ jobs:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
+      - run: tar xf prep/suricata-update.tar.gz
       - name: Setup cbindgen
         run: |
           mkdir -p $HOME/.cargo/bin
@@ -885,6 +1007,8 @@ jobs:
       - run: test -e /usr/local/bin/libsuricata-config
       - run: test -e /usr/local/lib/libsuricata.so
       - run: test -e /usr/local/lib/$(readlink /usr/local/lib/libsuricata.so)
+      - run: suricata-update -V
+      - run: suricatasc -h
 
   ubuntu-20-04-too-old-rust:
     name: Ubuntu 20.04 (unsupported rust)
@@ -939,16 +1063,16 @@ jobs:
             exit 0
           fi
 
-  ubuntu-18-04-debug-validation:
-    name: Ubuntu 18.04 (Debug Validation)
-    runs-on: ubuntu-18.04
-    container: ubuntu:18.04
+  ubuntu-22-04-debug-validation:
+    name: Ubuntu 22.04 (Debug Validation)
+    runs-on: ubuntu-22.04
+    container: ubuntu:22.04
     needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -979,7 +1103,7 @@ jobs:
                 libhiredis-dev \
                 libjansson-dev \
                 libevent-dev \
-                libevent-pthreads-2.1.6 \
+                libevent-pthreads-2.1-7 \
                 libjansson-dev \
                 libpython2.7 \
                 make \
@@ -1011,16 +1135,16 @@ jobs:
       - name: Running suricata-verify
         run: python3 ./suricata-verify/run.py -q
 
-  ubuntu-18-04:
-    name: Ubuntu 18.04 (Cocci)
-    runs-on: ubuntu-18.04
-    container: ubuntu:18.04
+  ubuntu-22-04:
+    name: Ubuntu 22.04 (Cocci)
+    runs-on: ubuntu-22.04
+    container: ubuntu:22.04
     needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -1051,12 +1175,14 @@ jobs:
                 libhiredis-dev \
                 libjansson-dev \
                 libevent-dev \
-                libevent-pthreads-2.1.6 \
+                libevent-pthreads-2.1-7 \
                 libjansson-dev \
                 libpython2.7 \
+                libpython3.10 \
                 make \
                 parallel \
                 python3-yaml \
+                python-is-python3 \
                 rustc \
                 software-properties-common \
                 zlib1g \
@@ -1104,16 +1230,16 @@ jobs:
         run: python3 ./suricata-verify/run.py -q
 
   # test build with afl and fuzztargets
-  ubuntu-18-04-fuzz:
-    name: Ubuntu 18.04 (Fuzz)
-    runs-on: ubuntu-18.04
-    container: ubuntu:18.04
+  ubuntu-22-04-fuzz:
+    name: Ubuntu 22.04 (Fuzz)
+    runs-on: ubuntu-22.04
+    container: ubuntu:22.04
     needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -1176,7 +1302,7 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -1238,6 +1364,9 @@ jobs:
       - run: tar xf prep/suricata-verify.tar.gz
       - name: Running suricata-verify
         run: python3 ./suricata-verify/run.py -q
+      - run: make install
+      - run: suricata-update -V
+      - run: suricatasc -h
 
   debian-9:
     name: Debian 9
@@ -1299,6 +1428,9 @@ jobs:
       - run: tar xf prep/suricata-verify.tar.gz
       - name: Running suricata-verify
         run: python3 ./suricata-verify/run.py -q
+      - run: make install
+      - run: suricata-update -V
+      - run: suricatasc -h
 
   macos-latest:
     name: MacOS Latest
@@ -1307,7 +1439,7 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@f4278025ab0f432ce369118909e46deec636f50c
+        uses: actions/cache@a7c34adf76222e77931dedbf4a45b2e4648ced19
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -1339,6 +1471,7 @@ jobs:
           name: prep
           path: prep
       - run: tar xvf prep/libhtp.tar.gz
+      - run: tar xvf prep/suricata-update.tar.gz
       - run: ./autogen.sh
       - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-unittests
       - run: make -j2
@@ -1347,6 +1480,9 @@ jobs:
       - run: tar xf prep/suricata-verify.tar.gz
       - name: Running suricata-verify
         run: python3 ./suricata-verify/run.py -q
+      - run: make install
+      - run: suricata-update -V
+      - run: suricatasc -h
 
   windows-msys2-mingw64-npcap:
     name: Windows MSYS2 MINGW64 (NPcap)
@@ -1396,6 +1532,8 @@ jobs:
           ./src/suricata -u -l /tmp/
           # need cwd in path due to npcap dlls (see above)
           PATH="$PATH:$(pwd)" python3 ./suricata-verify/run.py -q
+      - run: make install
+      - run: suricata-update -V
 
   windows-msys2-mingw64-libpcap:
     name: Windows MSYS2 MINGW64 (libpcap)
@@ -1433,3 +1571,5 @@ jobs:
           ./src/suricata --build-info
           ./src/suricata -u -l /tmp/
           python3 ./suricata-verify/run.py -q
+      - run: make install
+      - run: suricata-update -V
