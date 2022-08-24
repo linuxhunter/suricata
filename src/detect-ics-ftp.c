@@ -57,8 +57,9 @@ int detect_get_ftp_audit_data(Packet *p, ics_ftp_t *ics_ftp)
 	uint64_t tx_count;
 
 	if (p->flow->alproto == ALPROTO_FTP) {
-		tx_count = FTPGetTxCnt(p->flow->alstate);
-		FTPTransaction *tx = FTPGetTx(p->flow->alstate, tx_count-1);
+		FtpState *ftp_state = p->flow->alstate;
+		tx_count = FTPGetTxCnt(ftp_state);
+		FTPTransaction *tx = FTPGetTx(ftp_state, tx_count-1);
 		if (tx != NULL) {
 			if (tx->command_descriptor == NULL) {
 				ret = TM_ECODE_FAILED;
@@ -71,6 +72,25 @@ int detect_get_ftp_audit_data(Packet *p, ics_ftp_t *ics_ftp)
 			memset(ics_ftp->command, 0x00, tx->command_descriptor->command_length+1);
 			memcpy(ics_ftp->command, tx->command_descriptor->command_name, tx->command_descriptor->command_length);
 			ics_ftp->command_length = tx->command_descriptor->command_length;
+			if (tx->command_descriptor->command == FTP_COMMAND_USER) {
+				if (ftp_state->login_info.username != NULL) {
+					if ((ics_ftp->params = SCMalloc(ftp_state->login_info.username_length+1)) == NULL) {
+						ret = TM_ECODE_FAILED;
+						goto out;
+					}
+					ics_ftp->params_length = ftp_state->login_info.username_length;
+					memset(ics_ftp->params, 0x00, ics_ftp->params_length+1);
+					memcpy(ics_ftp->params, ftp_state->login_info.username, ics_ftp->params_length);
+				}
+			} else if (tx->command_descriptor->command == FTP_COMMAND_PASS) {
+				if ((ics_ftp->params = SCMalloc(ftp_state->login_info.password_length+1)) == NULL) {
+					ret = TM_ECODE_FAILED;
+					goto out;
+				}
+				ics_ftp->params_length = ftp_state->login_info.password_length;
+				memset(ics_ftp->params, 0x00, ics_ftp->params_length+1);
+				memcpy(ics_ftp->params, ftp_state->login_info.password, ics_ftp->params_length);
+			}
 		}
 	} else if (p->flow->alproto == ALPROTO_FTPDATA) {
 		tx_count = FTPDataGetTxCnt(p->flow->alstate);

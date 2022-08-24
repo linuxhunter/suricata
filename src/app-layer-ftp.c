@@ -732,6 +732,28 @@ static AppLayerResult FTPParseRequest(Flow *f, void *ftp_state, AppLayerParserSt
                     state->active = false;
                 }
                 break;
+			case FTP_COMMAND_USER:
+				if (state->login_info.username == NULL) {
+					if ((state->login_info.username = SCMalloc(state->current_line_len - cmd_descriptor->command_length)) == NULL) {
+						SCLogDebug("Out of Memory.");
+						SCReturnStruct(APP_LAYER_ERROR);
+					}
+					memset(state->login_info.username, 0x00, state->current_line_len - cmd_descriptor->command_length);
+					memcpy(state->login_info.username, state->current_line + cmd_descriptor->command_length + 1, state->current_line_len - cmd_descriptor->command_length);
+					state->login_info.username_length = state->current_line_len - cmd_descriptor->command_length - 1;
+				}
+				break;
+			case FTP_COMMAND_PASS:
+				if (state->login_info.password == NULL) {
+					if ((state->login_info.password = SCMalloc(state->current_line_len - cmd_descriptor->command_length)) == NULL) {
+						SCLogDebug("Out of Memory.");
+						SCReturnStruct(APP_LAYER_ERROR);
+					}
+					memset(state->login_info.password, 0x00, state->current_line_len - cmd_descriptor->command_length);
+					memcpy(state->login_info.password, state->current_line + cmd_descriptor->command_length + 1, state->current_line_len - cmd_descriptor->command_length);
+					state->login_info.password_length= state->current_line_len - cmd_descriptor->command_length - 1;
+				}
+				break;
             default:
                 break;
         }
@@ -917,6 +939,10 @@ static void *FTPStateAlloc(void *orig_state, AppProto proto_orig)
 static void FTPStateFree(void *s)
 {
     FtpState *fstate = (FtpState *) s;
+	if (fstate->login_info.username != NULL)
+		SCFree(fstate->login_info.username);
+	if (fstate->login_info.password != NULL)
+		SCFree(fstate->login_info.password);
     if (fstate->port_line != NULL)
         FTPFree(fstate->port_line, fstate->port_line_size);
     if (fstate->line_state[0].db)

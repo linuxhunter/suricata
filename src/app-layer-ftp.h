@@ -158,6 +158,12 @@ typedef struct FTPTransaction_  {
     TAILQ_ENTRY(FTPTransaction_) next;
 } FTPTransaction;
 
+typedef struct FtpLogin_ {
+	char *username;
+	uint16_t username_length;
+	char *password;
+	uint16_t password_length;
+} FtpLogin;
 /** FTP State for app layer parser */
 typedef struct FtpState_ {
     bool active;
@@ -179,6 +185,7 @@ typedef struct FtpState_ {
 
     FtpRequestCommand command;
     FtpRequestCommandArgOfs arg_offset;
+	FtpLogin login_info;
     uint32_t port_line_len;
     uint32_t port_line_size;
     uint8_t *port_line;
