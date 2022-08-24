@@ -654,6 +654,55 @@ out:
 	return ret;
 }
 
+static int serialize_audit_ftp_data(const Packet *p, int template_id, ics_ftp_t *ftp, uint8_t **audit_data, int *audit_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL, *inner_box = NULL;
+	uint8_t *audit_data_ptr = NULL;
+
+	if (ftp->command == NULL) {
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	inner_box = tlv_box_create();
+	tlv_box_put_uchar(inner_box, FTP_COMMAND_LENGTH, ftp->command_length);
+	tlv_box_put_string(inner_box, FTP_COMMAND, ftp->command);
+	tlv_box_put_uint(inner_box, FTP_PARAMS_LENGTH, ftp->params_length);
+	if (ftp->params_length > 0)
+		tlv_box_put_string(inner_box, FTP_PARAMS, ftp->params);
+	else
+		tlv_box_put_string(inner_box, FTP_PARAMS, (char *)"");
+	if (tlv_box_serialize(inner_box) != 0) {
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	box = serialize_audit_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, FTP);
+	tlv_box_put_object(box, FTP_AUDIT_DATA, inner_box);
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*audit_data_len = tlv_box_get_size(box);
+	if ((*audit_data = SCMalloc(*audit_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*audit_data, 0x00, *audit_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*audit_data), *audit_data_len, "%d:", *audit_data_len);
+	audit_data_ptr = (uint8_t *)strchr((char *)(*audit_data), ':');
+	audit_data_ptr++;
+	memcpy(audit_data_ptr, tlv_box_get_buffer(box), *audit_data_len);
+out:
+	if (inner_box)
+		tlv_box_destroy(inner_box);
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
@@ -702,6 +751,11 @@ static int create_trdp_warning_data(const Packet *p, int template_id, trdp_ht_it
 static int create_http1_audit_data(const Packet *p, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_http1_data(p, 0, http1, audit_data, audit_data_len);
+}
+
+static int create_ftp_audit_data(const Packet *p, ics_ftp_t *ftp, uint8_t **audit_data, int *audit_data_len)
+{
+	return serialize_audit_ftp_data(p, 0, ftp, audit_data, audit_data_len);
 }
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
@@ -795,6 +849,12 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			break;
+		case ALPROTO_FTP:
+			ret = create_ftp_audit_data(p, ics_adu->audit.ftp, &audit_data, &audit_data_len);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
+			break;
 		default:
 			goto out;
 	}
@@ -818,18 +878,10 @@ int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p)
 
 	switch(p->flow->alproto) {
 		case ALPROTO_MODBUS:
-			if (p->flowflags & FLOW_PKT_TOSERVER)
-				ret = TRUE;
-			break;
 		case ALPROTO_DNP3:
-			if (p->flowflags & FLOW_PKT_TOSERVER)
-				ret = TRUE;
-			break;
 		case ALPROTO_TRDP:
-			if (p->flowflags & FLOW_PKT_TOSERVER)
-				ret = TRUE;
-			break;
 		case ALPROTO_HTTP1:
+		case ALPROTO_FTP:
 			if (p->flowflags & FLOW_PKT_TOSERVER)
 				ret = TRUE;
 			break;

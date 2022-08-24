@@ -6,21 +6,23 @@
 #include "detect-ics-dnp3.h"
 #include "detect-ics-trdp.h"
 #include "detect-ics-http1.h"
+#include "detect-ics-ftp.h"
 
 typedef enum {
-    ICS_MODE_MIN = 0,
-    ICS_MODE_STUDY,
-    ICS_MODE_NORMAL,
-    ICS_MODE_WARNING,
-    ICS_MODE_MAX,
+	ICS_MODE_MIN = 0,
+	ICS_MODE_STUDY,
+	ICS_MODE_NORMAL,
+	ICS_MODE_WARNING,
+	ICS_MODE_MAX,
 } ics_mode_t;
 
 typedef enum {
-    MODBUS = 0,
-    DNP3,
-    TRDP,
-    HTTP1,
-    ICS_PROTO_MAX,
+	MODBUS = 0,
+	DNP3,
+	TRDP,
+	HTTP1,
+	FTP,
+	ICS_PROTO_MAX,
 } ics_proto_t;
 
 #define ICS_ADU_WARNING_INVALID_FLAG	0x01
@@ -34,6 +36,7 @@ typedef struct {
 		ics_dnp3_t *dnp3;
 		ics_trdp_t *trdp;
 		ics_http1_t *http1;
+		ics_ftp_t *ftp;
 	}audit;
 	union {
 		modbus_ht_item_t *modbus;

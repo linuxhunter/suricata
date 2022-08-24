@@ -36,8 +36,16 @@ typedef enum {
 	TRDP_STUDY_DATA,
 	TRDP_WARNING_DATA,
 	HTTP1_AUDIT_DATA,
+	FTP_AUDIT_DATA,
 	END,
 } ics_tlv_type_t;
+
+typedef enum {
+	FTP_COMMAND_LENGTH = 0x1000,
+	FTP_COMMAND,
+	FTP_PARAMS_LENGTH,
+	FTP_PARAMS,
+} ics_ftp_tlv_type_t;
 
 void ICSRedisLogRegister(void);
 #endif

@@ -92,7 +92,8 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 	if (f->alproto != ALPROTO_MODBUS &&
 		f->alproto != ALPROTO_DNP3 &&
 		f->alproto != ALPROTO_TRDP &&
-		f->alproto != ALPROTO_HTTP1)
+		f->alproto != ALPROTO_HTTP1 &&
+		f->alproto != ALPROTO_FTP)
 		goto error;
 	ics_adu->work_mode = work_mode;
 	ics_adu->proto = f->alproto;
@@ -161,6 +162,14 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 				if (ics_adu->audit.http1 == NULL)
 					goto error;
 				memset(ics_adu->audit.http1, 0x00, sizeof(ics_http1_t));
+			}
+			break;
+		case ALPROTO_FTP:
+			{
+				ics_adu->audit.ftp = SCMalloc(sizeof(ics_ftp_t));
+				if (ics_adu->audit.ftp == NULL)
+					goto error;
+				memset(ics_adu->audit.ftp, 0x00, sizeof(ics_ftp_t));
 			}
 			break;
 		default:
@@ -246,6 +255,19 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 				ics_adu->audit.http1 = NULL;
 			}
 			break;
+		case ALPROTO_FTP:
+			if (ics_adu->audit.ftp != NULL) {
+				if (ics_adu->audit.ftp->command != NULL) {
+					SCFree(ics_adu->audit.ftp->command);
+					ics_adu->audit.ftp->command = NULL;
+				}
+				if (ics_adu->audit.ftp->params != NULL) {
+					SCFree(ics_adu->audit.ftp->params);
+					ics_adu->audit.ftp->params = NULL;
+				}
+				SCFree(ics_adu->audit.ftp);
+				ics_adu->audit.ftp = NULL;
+			}
 		default:
 			break;
 	}
@@ -304,6 +326,11 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 			if (ret != TM_ECODE_OK)
 				goto out;
 			break;
+		case ALPROTO_FTP:
+			ret = detect_get_ftp_audit_data(p, ics_adu->audit.ftp);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			break;
 		default:
 			ret = TM_ECODE_FAILED;
 			goto out;
@@ -316,15 +343,16 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 {
 	ics_adu_t *ics_adu = NULL;
 
-	if (p->payload_len == 0) {
-		SCLogNotice("packet payload len is zero.");
-		goto error;
-	}
 	if (p->flow && (p->flowflags & FLOW_PKT_TOSERVER)) {
 		if (p->flow->alproto == ALPROTO_MODBUS ||
 			p->flow->alproto == ALPROTO_DNP3 ||
 			p->flow->alproto == ALPROTO_TRDP ||
-			p->flow->alproto == ALPROTO_HTTP1) {
+			p->flow->alproto == ALPROTO_HTTP1 ||
+			p->flow->alproto == ALPROTO_FTP) {
+			if (p->flow->alproto == ALPROTO_HTTP1 && p->payload_len == 0) {
+				SCLogNotice("packet payload len is zero.");
+				goto error;
+			}
 			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow, global_ics_template_id);
 			if (ics_adu == NULL) {
 				SCLogNotice("create ics adu error.\n");
