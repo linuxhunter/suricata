@@ -660,7 +660,7 @@ static int serialize_audit_ftp_data(const Packet *p, int template_id, ics_ftp_t 
 	tlv_box_t *box = NULL, *inner_box = NULL;
 	uint8_t *audit_data_ptr = NULL;
 
-	if (ftp->command == NULL) {
+	if (ftp->command == NULL || ftp->command_length == 0) {
 		ret = TM_ECODE_FAILED;
 		goto out;
 	}
