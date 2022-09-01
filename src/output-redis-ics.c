@@ -703,6 +703,48 @@ out:
 	return ret;
 }
 
+static int serialize_audit_telnet_data(const Packet *p, int template_id, ics_telnet_t *telnet, uint8_t **audit_data, int *audit_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL, *inner_box = NULL;
+	uint8_t *audit_data_ptr = NULL;
+
+	if (telnet->data_length == 0)
+		goto out;
+	inner_box = tlv_box_create();
+	tlv_box_put_int(inner_box, TELNET_DATA_LENGTH, telnet->data_length);
+	tlv_box_put_bytes(inner_box, TELNET_DATA, (unsigned char *)telnet->data, telnet->data_length);
+	if (tlv_box_serialize(inner_box) != 0) {
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	box = serialize_audit_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, TELNET);
+	tlv_box_put_object(box, TELNET_AUDIT_DATA, inner_box);
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*audit_data_len = tlv_box_get_size(box);
+	if ((*audit_data = SCMalloc(*audit_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*audit_data, 0x00, *audit_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*audit_data), *audit_data_len, "%d:", *audit_data_len);
+	audit_data_ptr = (uint8_t *)strchr((char *)(*audit_data), ':');
+	audit_data_ptr++;
+	memcpy(audit_data_ptr, tlv_box_get_buffer(box), *audit_data_len);
+out:
+	if (inner_box)
+		tlv_box_destroy(inner_box);
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int create_modbus_audit_data(const Packet *p, ics_modbus_t *modbus, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_modbus_data(p, 0, modbus, audit_data, audit_data_len);
@@ -756,6 +798,11 @@ static int create_http1_audit_data(const Packet *p, ics_http1_t *http1, uint8_t 
 static int create_ftp_audit_data(const Packet *p, ics_ftp_t *ftp, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_ftp_data(p, 0, ftp, audit_data, audit_data_len);
+}
+
+static int create_telnet_audit_data(const Packet *p, ics_telnet_t *telnet, uint8_t **audit_data, int *audit_data_len)
+{
+	return serialize_audit_telnet_data(p, 0, telnet, audit_data, audit_data_len);
 }
 
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
@@ -856,6 +903,12 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
 			break;
+		case ALPROTO_TELNET:
+			ret = create_telnet_audit_data(p, ics_adu->audit.telnet, &audit_data, &audit_data_len);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
+			break;
 		default:
 			goto out;
 	}
@@ -884,6 +937,7 @@ int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p)
 		case ALPROTO_HTTP1:
 		case ALPROTO_FTP:
 		case ALPROTO_FTPDATA:
+		case ALPROTO_TELNET:
 			if (p->flowflags & FLOW_PKT_TOSERVER)
 				ret = TRUE;
 			break;

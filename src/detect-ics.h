@@ -7,6 +7,7 @@
 #include "detect-ics-trdp.h"
 #include "detect-ics-http1.h"
 #include "detect-ics-ftp.h"
+#include "detect-ics-telnet.h"
 
 typedef enum {
 	ICS_MODE_MIN = 0,
@@ -23,6 +24,7 @@ typedef enum {
 	HTTP1,
 	FTP,
 	FTPDATA,
+	TELNET,
 	ICS_PROTO_MAX,
 } ics_proto_t;
 
@@ -38,6 +40,7 @@ typedef struct {
 		ics_trdp_t *trdp;
 		ics_http1_t *http1;
 		ics_ftp_t *ftp;
+		ics_telnet_t *telnet;
 	}audit;
 	union {
 		modbus_ht_item_t *modbus;

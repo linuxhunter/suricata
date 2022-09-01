@@ -35,6 +35,12 @@ pub enum TelnetFrameType {
     Data,
 }
 
+pub enum TelnetFrameTypeData {
+    LOGIN(String),
+    PASSWD(String),
+    CMD(String),
+}
+
 pub struct TelnetTransaction {
     tx_id: u64,
     tx_data: AppLayerTxData,
@@ -79,6 +85,7 @@ pub struct TelnetState {
     /// either control or data frame
     response_specific_frame: Option<Frame>,
     state: TelnetProtocolState,
+    frame_data: Option<TelnetFrameTypeData>,
 }
 
 impl State<TelnetTransaction> for TelnetState {
@@ -103,6 +110,7 @@ impl TelnetState {
             response_frame: None,
             response_specific_frame: None,
             state: TelnetProtocolState::Idle,
+            frame_data: None,
         }
     }
 
@@ -143,6 +151,20 @@ impl TelnetState {
     fn _find_request(&mut self) -> Option<&mut TelnetTransaction> {
         // TODO
         None
+    }
+
+    fn set_telnet_frame_data(&mut self, data: &str) {
+        match self.state {
+            TelnetProtocolState::LoginRecv => {
+                self.frame_data = Some(TelnetFrameTypeData::LOGIN(String::from(data).trim().to_owned()));
+            },
+            TelnetProtocolState::PasswdRecv => {
+                self.frame_data = Some(TelnetFrameTypeData::PASSWD(String::from(data).trim().to_owned()));
+            },
+            _ => {
+                self.frame_data = Some(TelnetFrameTypeData::CMD(String::from(data).trim().to_owned()));
+            },
+        }
     }
 
     // app-layer-frame-documentation tag start: parse_request
@@ -224,9 +246,15 @@ impl TelnetState {
                         match self.state {
                             TelnetProtocolState::LoginSent => {
                                 self.state = TelnetProtocolState::LoginRecv;
+                                if let Ok(s) = std::str::from_utf8(d) {
+                                    self.set_telnet_frame_data(s);
+                                }
                             }
                             TelnetProtocolState::PasswdSent => {
                                 self.state = TelnetProtocolState::PasswdRecv;
+                                if let Ok(s) = std::str::from_utf8(d) {
+                                    self.set_telnet_frame_data(s);
+                                }
                             }
                             TelnetProtocolState::AuthOk => {
                                 let _message = std::str::from_utf8(&d);
@@ -234,7 +262,14 @@ impl TelnetState {
                                     SCLogDebug!("=> {}", _message);
                                 }
                             }
-                            _ => {}
+                            _ => {
+                                if d.len() > 1 {
+                                    if let Ok(s) = std::str::from_utf8(d) {
+                                        self.state = TelnetProtocolState::AuthOk;
+                                        self.set_telnet_frame_data(s);
+                                    }
+                                }
+                            }
                         }
                     } else if let parser::TelnetMessageType::Control(_c) = request {
                         SCLogDebug!("request {:?}", _c);
@@ -244,6 +279,49 @@ impl TelnetState {
                     // Not enough data. This parser doesn't give us a good indication
                     // of how much data is missing so just ask for one more byte so the
                     // parse is called as soon as more data is received.
+                    {
+                        match self.state {
+                            TelnetProtocolState::LoginSent => {
+                                for (index, value) in input.into_iter().enumerate() {
+                                    if *value == 0x0d {
+                                        if index == (input.len() - 2) || index == (input.len() - 1) {
+                                            if let Ok(s) = std::str::from_utf8(input) {
+                                                self.state = TelnetProtocolState::LoginRecv;
+                                                self.set_telnet_frame_data(s);
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            TelnetProtocolState::PasswdSent => {
+                                let mut start_index = 0;
+                                let mut end_index = 0;
+                                for i in 0..input.len()-1 {
+                                    if input[i] == 0x0d {
+                                        if start_index == 0x00 {
+                                            start_index = i+1;
+                                            if input[i+1] == 0x00 {
+                                                start_index = i+2;
+                                            }
+                                        } else {
+                                            end_index = i;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if start_index != 0 && end_index != 0 {
+                                    let input_slice = &input[start_index..end_index];
+                                    if let Ok(s) = std::str::from_utf8(input_slice) {
+                                        self.state = TelnetProtocolState::PasswdRecv;
+                                        self.set_telnet_frame_data(s);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     let consumed = input.len() - start.len();
                     let needed = start.len() + 1;
                     return AppLayerResult::incomplete(consumed as u32, needed as u32);
@@ -346,6 +424,16 @@ impl TelnetState {
                         }
                     } else if let parser::TelnetMessageType::Control(_c) = response {
                         SCLogDebug!("response {:?}", _c);
+                    }
+                    {
+                        match self.state {
+                            TelnetProtocolState::AuthOk => {
+                                if let Ok(s) = std::str::from_utf8(input) {
+                                    self.set_telnet_frame_data(s);
+                                }
+                            },
+                            _ => {},
+                        }
                     }
                 }
                 Err(nom7::Err::Incomplete(_)) => {
@@ -515,6 +603,47 @@ pub unsafe extern "C" fn rs_telnet_tx_get_alstate_progress(
     let _tx = cast_pointer!(tx, TelnetTransaction);
     // TODO
     return 0;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rs_telnet_state_get_frame_data(
+    state: *mut std::os::raw::c_void,
+    data_type: *mut std::os::raw::c_char,
+    data_content: *mut std::os::raw::c_char,
+    data_length: *mut std::os::raw::c_int) {
+    let state = cast_pointer!(state, TelnetState);
+    match &state.frame_data {
+        Some(data) => {
+            match data {
+                TelnetFrameTypeData::LOGIN(s) => {
+                    *data_type = 1;
+                    std::ptr::copy_nonoverlapping(s.as_ptr(), data_content as *mut u8, s.len());
+                    *data_length = s.len() as i32;
+                    let _ = *s;
+                    state.frame_data = None;
+                }
+                TelnetFrameTypeData::PASSWD(s) => {
+                    *data_type = 2;
+                    std::ptr::copy_nonoverlapping(s.as_ptr(), data_content as *mut u8, s.len());
+                    *data_length = s.len() as i32;
+                    let _ = *s;
+                    state.frame_data = None;
+                }
+                TelnetFrameTypeData::CMD(s) => {
+                    if s.len() > 2 {    //ignore \r\n line
+                        *data_type = 3;
+                        std::ptr::copy_nonoverlapping(s.as_ptr(), data_content as *mut u8, s.len());
+                        *data_length = s.len() as i32;
+                        let _ = *s;
+                        state.frame_data = None;
+                    } else {
+                        let _ = *s;
+                    }
+                }
+            }
+        }
+        None => {}
+    }
 }
 
 export_tx_data_get!(rs_telnet_get_tx_data, TelnetTransaction);

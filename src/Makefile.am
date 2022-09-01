@@ -357,6 +357,7 @@ noinst_HEADERS = \
 	detect-ics-trdp.h \
 	detect-ics-http1.h \
 	detect-ics-ftp.h \
+	detect-ics-telnet.h \
 	device-storage.h \
 	feature.h \
 	flow-bit.h \
@@ -963,6 +964,7 @@ libsuricata_c_a_SOURCES = \
 	detect-ics-trdp.c \
 	detect-ics-http1.c \
 	detect-ics-ftp.c \
+	detect-ics-telnet.c \
 	device-storage.c \
 	feature.c \
 	flow-bit.c \

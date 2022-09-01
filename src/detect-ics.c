@@ -94,7 +94,8 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 		f->alproto != ALPROTO_TRDP &&
 		f->alproto != ALPROTO_HTTP1 &&
 		f->alproto != ALPROTO_FTP &&
-		f->alproto != ALPROTO_FTPDATA)
+		f->alproto != ALPROTO_FTPDATA &&
+		f->alproto != ALPROTO_TELNET)
 		goto error;
 	ics_adu->work_mode = work_mode;
 	ics_adu->proto = f->alproto;
@@ -173,6 +174,12 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 					goto error;
 				memset(ics_adu->audit.ftp, 0x00, sizeof(ics_ftp_t));
 			}
+			break;
+		case ALPROTO_TELNET:
+			ics_adu->audit.telnet = SCMalloc(sizeof(ics_telnet_t));
+			if (ics_adu->audit.telnet == NULL)
+				goto error;
+			memset(ics_adu->audit.telnet, 0x00, sizeof(ics_telnet_t));
 			break;
 		default:
 			break;
@@ -270,6 +277,17 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 				SCFree(ics_adu->audit.ftp);
 				ics_adu->audit.ftp = NULL;
 			}
+			break;
+		case ALPROTO_TELNET:
+			if (ics_adu->audit.telnet != NULL) {
+				if (ics_adu->audit.telnet->data != NULL) {
+					SCFree(ics_adu->audit.telnet->data);
+					ics_adu->audit.telnet->data = NULL;
+				}
+				SCFree(ics_adu->audit.telnet);
+				ics_adu->audit.telnet = NULL;
+			}
+			break;
 		default:
 			break;
 	}
@@ -334,6 +352,11 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 			if (ret != TM_ECODE_OK)
 				goto out;
 			break;
+		case ALPROTO_TELNET:
+			ret = detect_get_telnet_audit_data(p, ics_adu->audit.telnet);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			break;
 		default:
 			ret = TM_ECODE_FAILED;
 			goto out;
@@ -352,7 +375,8 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 			p->flow->alproto == ALPROTO_TRDP ||
 			p->flow->alproto == ALPROTO_HTTP1 ||
 			p->flow->alproto == ALPROTO_FTP ||
-			p->flow->alproto == ALPROTO_FTPDATA) {
+			p->flow->alproto == ALPROTO_FTPDATA ||
+			p->flow->alproto == ALPROTO_TELNET) {
 			if (p->flow->alproto == ALPROTO_HTTP1 && p->payload_len == 0) {
 				SCLogNotice("packet payload len is zero.");
 				goto error;
