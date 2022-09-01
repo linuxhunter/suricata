@@ -54,11 +54,15 @@ static uint64_t FTPDataGetTxCnt(void *state)
 int detect_get_ftp_audit_data(Packet *p, ics_ftp_t *ics_ftp)
 {
 	int ret = TM_ECODE_OK;
+	static uint64_t global_ftp_tx_count = 0;
 	uint64_t tx_count;
 
 	if (p->flow->alproto == ALPROTO_FTP) {
 		FtpState *ftp_state = p->flow->alstate;
 		tx_count = FTPGetTxCnt(ftp_state);
+		if (global_ftp_tx_count == tx_count)
+			goto out;
+		global_ftp_tx_count = tx_count;
 		FTPTransaction *tx = FTPGetTx(ftp_state, tx_count-1);
 		if (tx != NULL) {
 			if (tx->command_descriptor == NULL) {

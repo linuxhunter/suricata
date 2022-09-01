@@ -37,9 +37,13 @@ static void *HTPStateGetTx(void *alstate, uint64_t tx_id)
 int detect_get_http1_audit_data(Packet *p, ics_http1_t *ics_http1)
 {
 	int ret = TM_ECODE_OK;
+	static uint64_t global_http_tx_count = 0;
 	uint64_t tx_count = 0;
 
 	tx_count = HTPStateGetTxCnt(p->flow->alstate);
+	if (global_http_tx_count == tx_count)
+		goto out;
+	global_http_tx_count = tx_count;
 	htp_tx_t *tx = HTPStateGetTx(p->flow->alstate, tx_count-1);
 	if (tx != NULL) {
 		if (bstr_ptr(tx->request_line) == NULL) {

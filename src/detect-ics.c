@@ -377,10 +377,6 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 			p->flow->alproto == ALPROTO_FTP ||
 			p->flow->alproto == ALPROTO_FTPDATA ||
 			p->flow->alproto == ALPROTO_TELNET) {
-			if (p->flow->alproto == ALPROTO_HTTP1 && p->payload_len == 0) {
-				SCLogNotice("packet payload len is zero.");
-				goto error;
-			}
 			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow, global_ics_template_id);
 			if (ics_adu == NULL) {
 				SCLogNotice("create ics adu error.\n");
