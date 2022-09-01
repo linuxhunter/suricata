@@ -41,7 +41,7 @@ void ExceptionPolicyApply(Packet *p, enum ExceptionPolicy policy, enum PacketDro
                 SCLogDebug("EXCEPTION_POLICY_DROP_PACKET");
                 DecodeSetNoPayloadInspectionFlag(p);
                 DecodeSetNoPacketInspectionFlag(p);
-                PacketDrop(p, drop_reason);
+                PacketDrop(p, ACTION_DROP, drop_reason);
                 break;
             case EXCEPTION_POLICY_BYPASS_FLOW:
                 PacketBypassCallback(p);
@@ -88,7 +88,10 @@ enum ExceptionPolicy ExceptionPolicyParse(const char *option, const bool support
             policy = EXCEPTION_POLICY_IGNORE;
             SCLogConfig("%s: %s", option, value_str);
         } else {
-            SCLogConfig("%s: ignore", option);
+            FatalErrorOnInit(SC_ERR_INVALID_ARGUMENT,
+                    "\"%s\" is not a valid exception policy value. Valid options are drop-flow, "
+                    "pass-flow, bypass, drop-packet, pass-packet or ignore.",
+                    value_str);
         }
 
         if (!support_flow) {

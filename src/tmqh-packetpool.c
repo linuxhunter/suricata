@@ -49,6 +49,7 @@
 #include "util-error.h"
 #include "util-profiling.h"
 #include "util-device.h"
+#include "util-validate.h"
 
 /* Number of freed packet to save for one pool before freeing them. */
 #define MAX_PENDING_RETURN_PACKETS 32
@@ -449,6 +450,13 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
 
         SCLogDebug("tunnel stuff done, move on (proot %d)", proot);
     }
+
+#ifdef DEBUG_VALIDATION
+    /* Check that the drop reason has been set, if we have a drop */
+    if (PacketTestAction(p, ACTION_DROP)) {
+        DEBUG_VALIDATE_BUG_ON((p)->drop_reason == PKT_DROP_REASON_NOT_SET);
+    }
+#endif
 
     /* we're done with the tunnel root now as well */
     if (proot == true) {

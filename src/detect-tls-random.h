@@ -1,4 +1,4 @@
-/* Copyright (C) 2016 Open Information Security Foundation
+/* Copyright (C) 2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -15,15 +15,11 @@
  * 02110-1301, USA.
  */
 
-/**
- * \file
- *
- * \author Mats Klepsland <mats.klepsland@gmail.com>
- */
+#ifndef __DETECT_TLS_RANDOM_H__
+#define __DETECT_TLS_RANDOM_H__
 
-#ifndef __DETECT_TLS_SNI_H__
-#define __DETECT_TLS_SNI_H__
+void DetectTlsRandomTimeRegister(void);
+void DetectTlsRandomBytesRegister(void);
+void DetectTlsRandomRegister(void);
 
-void DetectTlsSniRegister(void);
-
-#endif /* __DETECT_TLS_SNI_H__ */
+#endif /* __DETECT_TLS_RANDOM_H__ */

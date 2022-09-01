@@ -103,6 +103,7 @@
 
 #include "util-streaming-buffer.h"
 #include "util-lua.h"
+#include "util-luajit.h"
 #include "tm-modules.h"
 #include "tmqh-packetpool.h"
 #include "decode-chdlc.h"
@@ -198,6 +199,7 @@ static void RegisterUnittests(void)
     DetectAddressTests();
     DetectProtoTests();
     DetectPortTests();
+    DetectEngineAlertRegisterTests();
     SCAtomicRegisterTests();
     MemrchrRegisterTests();
     AppLayerUnittestsRegister();
