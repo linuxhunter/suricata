@@ -1049,6 +1049,11 @@ app-layer:
       detection-ports:
         dp: 20000
 
+    trdp:
+      enabled: yes
+      detection-ports:
+        dp: 17224
+
     # SCADA EtherNet/IP and CIP protocol support
     enip:
       enabled: no
