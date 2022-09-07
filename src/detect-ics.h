@@ -5,6 +5,7 @@
 #include "detect-ics-modbus.h"
 #include "detect-ics-dnp3.h"
 #include "detect-ics-trdp.h"
+#include "detect-ics-enip.h"
 #include "detect-ics-http1.h"
 #include "detect-ics-ftp.h"
 #include "detect-ics-telnet.h"
@@ -21,6 +22,7 @@ typedef enum {
 	MODBUS = 0,
 	DNP3,
 	TRDP,
+	ENIP,
 	HTTP1,
 	FTP,
 	FTPDATA,
@@ -38,6 +40,7 @@ typedef struct {
 		ics_modbus_t *modbus;
 		ics_dnp3_t *dnp3;
 		ics_trdp_t *trdp;
+		ics_enip_t *enip;
 		ics_http1_t *http1;
 		ics_ftp_t *ftp;
 		ics_telnet_t *telnet;

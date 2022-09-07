@@ -1446,7 +1446,7 @@ stream:
   memcap: 64mb
   #memcap-policy: ignore
   checksum-validation: yes      # reject incorrect csums
-  #midstream: false
+  midstream: true
   #midstream-policy: ignore
   inline: auto                  # auto will use inline mode in IPS mode, yes or no set it statically
   reassembly:

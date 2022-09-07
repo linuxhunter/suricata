@@ -92,6 +92,7 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 	if (f->alproto != ALPROTO_MODBUS &&
 		f->alproto != ALPROTO_DNP3 &&
 		f->alproto != ALPROTO_TRDP &&
+		f->alproto != ALPROTO_ENIP &&
 		f->alproto != ALPROTO_HTTP1 &&
 		f->alproto != ALPROTO_FTP &&
 		f->alproto != ALPROTO_FTPDATA &&
@@ -156,6 +157,14 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 						goto error;
 					memset(ics_adu->warning.trdp, 0x00, sizeof(trdp_ht_item_t));
 				}
+			}
+			break;
+		case ALPROTO_ENIP:
+			{
+				ics_adu->audit.enip = SCMalloc(sizeof(ics_enip_t));
+				if (ics_adu->audit.enip == NULL)
+					goto error;
+				memset(ics_adu->audit.enip, 0x00, sizeof(ics_enip_t));
 			}
 			break;
 		case ALPROTO_HTTP1:
@@ -254,6 +263,12 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 				}
 			}
 			break;
+		case ALPROTO_ENIP:
+			if (ics_adu->audit.enip != NULL) {
+				SCFree(ics_adu->audit.enip);
+				ics_adu->audit.enip = NULL;
+			}
+			break;
 		case ALPROTO_HTTP1:
 			if (ics_adu->audit.http1 != NULL) {
 				if (ics_adu->audit.http1->http_uri != NULL) {
@@ -341,6 +356,11 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
+		case ALPROTO_ENIP:
+			ret = detect_get_enip_audit_data(p, ics_adu->audit.enip);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			break;
 		case ALPROTO_HTTP1:
 			ret = detect_get_http1_audit_data(p, ics_adu->audit.http1);
 			if (ret != TM_ECODE_OK)
@@ -369,14 +389,16 @@ TmEcode detect_ics_adu(ThreadVars *tv, Packet *p)
 {
 	ics_adu_t *ics_adu = NULL;
 
-	if (p->flow && (p->flowflags & FLOW_PKT_TOSERVER)) {
-		if (p->flow->alproto == ALPROTO_MODBUS ||
-			p->flow->alproto == ALPROTO_DNP3 ||
-			p->flow->alproto == ALPROTO_TRDP ||
-			p->flow->alproto == ALPROTO_HTTP1 ||
-			p->flow->alproto == ALPROTO_FTP ||
-			p->flow->alproto == ALPROTO_FTPDATA ||
-			p->flow->alproto == ALPROTO_TELNET) {
+	if (p->flow) {
+		if (p->flow->alproto == ALPROTO_ENIP ||
+			(p->flowflags & FLOW_PKT_TOSERVER &&
+			 (p->flow->alproto == ALPROTO_MODBUS ||
+			  p->flow->alproto == ALPROTO_DNP3 ||
+			  p->flow->alproto == ALPROTO_TRDP ||
+			  p->flow->alproto == ALPROTO_HTTP1 ||
+			  p->flow->alproto == ALPROTO_FTP ||
+			  p->flow->alproto == ALPROTO_FTPDATA ||
+			  p->flow->alproto == ALPROTO_TELNET))) {
 			ics_adu = detect_create_ics_adu(global_ics_work_mode, p->flow, global_ics_template_id);
 			if (ics_adu == NULL) {
 				SCLogNotice("create ics adu error.\n");

@@ -26,26 +26,26 @@ static int ICSSendRedisLog(redisContext *c, ics_mode_t mode, uint8_t *data, size
 
 	switch(mode) {
 		case ICS_MODE_NORMAL:
-			reply = redisCommand(c, "%s %s %b", REDIS_PUBLISH_CMD, ICS_AUDIT_CHANNEL, data, data_len);
+			reply = redisCommand(c, "lpush audit %b", data, data_len);
 			if (reply == NULL) {
-				SCLogNotice("publish %s with data error.\n", ICS_AUDIT_CHANNEL);
+				SCLogNotice("lpush audit with data error.\n");
 				ret = TM_ECODE_FAILED;
 				goto out;
 			}
 			freeReplyObject(reply);
 			break;
 		case ICS_MODE_STUDY:
-			reply = redisCommand(c, "%s %s %b", REDIS_PUBLISH_CMD, ICS_STUDY_CHANNEL, data, data_len);
+			reply = redisCommand(c, "lpush study %b", data, data_len);
 			if (reply == NULL) {
-				SCLogNotice("public %s with data error.\n", ICS_STUDY_CHANNEL);
+				SCLogNotice("lpush study with data error.\n");
 				ret = TM_ECODE_FAILED;
 				goto out;
 			}
 			break;
 		case ICS_MODE_WARNING:
-			reply = redisCommand(c, "%s %s %b", REDIS_PUBLISH_CMD, ICS_WARN_CHANNEL, data, data_len);
+			reply = redisCommand(c, "lpush warning %b", data, data_len);
 			if (reply == NULL) {
-				SCLogNotice("public %s with data error.\n", ICS_WARN_CHANNEL);
+				SCLogNotice("lpush warning with data error.\n");
 				ret = TM_ECODE_FAILED;
 				goto out;
 			}
@@ -82,7 +82,7 @@ static tlv_box_t* serialize_audit_common_data(const Packet *p, int template_id)
 	uint32_t flow_hash = 0;
 
 	box = tlv_box_create();
-	tlv_box_put_int(box, BEGIN, 0);
+	tlv_box_put_int(box, BEGIN, 100);
 	tlv_box_put_int(box, TEMPLATE_ID, template_id);
 	if (p->ethh != NULL) {
 		(void) snprintf(eth_src, sizeof(eth_src), "%02x:%02x:%02x:%02x:%02x:%02x",
@@ -619,6 +619,37 @@ out:
 	return ret;
 }
 
+static int serialize_audit_enip_data(const Packet *p, int template_id, ics_enip_t *enip, uint8_t **audit_data, int *audit_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *audit_data_ptr = NULL;
+
+	box = serialize_audit_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, ENIP);
+	tlv_box_put_bytes(box, ENIP_AUDIT_DATA, (unsigned char *)enip, sizeof(ics_enip_t));
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*audit_data_len = tlv_box_get_size(box);
+	if ((*audit_data = SCMalloc(*audit_data_len+sizeof(int)+sizeof(char)+1)) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*audit_data, 0x00, *audit_data_len+sizeof(int)+sizeof(char)+1);
+	snprintf((char *)(*audit_data), *audit_data_len, "%d:", *audit_data_len);
+	audit_data_ptr = (uint8_t *)strchr((char *)(*audit_data), ':');
+	audit_data_ptr++;
+	memcpy(audit_data_ptr, tlv_box_get_buffer(box), *audit_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int serialize_audit_http1_data(const Packet *p, int template_id, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
 {
 	int ret = TM_ECODE_OK;
@@ -790,6 +821,11 @@ static int create_trdp_warning_data(const Packet *p, int template_id, trdp_ht_it
 	return serialize_warning_trdp_data(p, template_id, trdp, warning_data, warning_data_len);
 }
 
+static int create_enip_audit_data(const Packet *p, ics_enip_t *enip, uint8_t **audit_data, int *audit_data_len)
+{
+	return serialize_audit_enip_data(p, 0, enip, audit_data, audit_data_len);
+}
+
 static int create_http1_audit_data(const Packet *p, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_http1_data(p, 0, http1, audit_data, audit_data_len);
@@ -890,6 +926,12 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 					break;
 			}
 			break;
+		case ALPROTO_ENIP:
+			ret = create_enip_audit_data(p, ics_adu->audit.enip, &audit_data, &audit_data_len);
+			if (ret != TM_ECODE_OK)
+				goto out;
+			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
+			break;
 		case ALPROTO_HTTP1:
 			ret = create_http1_audit_data(p, ics_adu->audit.http1, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
@@ -940,6 +982,9 @@ int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p)
 		case ALPROTO_TELNET:
 			if (p->flowflags & FLOW_PKT_TOSERVER)
 				ret = TRUE;
+			break;
+		case ALPROTO_ENIP:
+			ret = TRUE;
 			break;
 		default:
 			break;
