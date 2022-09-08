@@ -42,6 +42,9 @@ typedef struct {
 
 int detect_get_enip_audit_data(Packet *p, ics_enip_t *audit_enip);
 int detect_get_enip_study_data(Packet *p, ics_enip_t *audit_enip, enip_ht_items_t *study_enip);
+int detect_get_enip_warning_data(HashTable *ht, Packet *p, ics_enip_t *audit_enip, enip_ht_item_t *warning_enip);
+int init_enip_hashtable(HashTable **ht, uint32_t size);
+int create_enip_hashtable(HashTable *ht, intmax_t template_id);
 void display_enip_audit_data(ics_enip_t *audit_enip);
 void display_enip_study_data(enip_ht_items_t *study_enip);
 #endif

@@ -704,6 +704,37 @@ out:
 	return ret;
 }
 
+static int serialize_warning_enip_data(const Packet *p, int template_id, enip_ht_item_t *enip, uint8_t **warning_data, int *warning_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *warning_data_ptr = NULL;
+
+	box = serialize_warning_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, ENIP);
+	tlv_box_put_bytes(box, ENIP_WARNING_DATA, (unsigned char *)enip, sizeof(enip_ht_item_t));
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*warning_data_len = tlv_box_get_size(box);
+	if ((*warning_data = SCMalloc(*warning_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*warning_data, 0x00, *warning_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*warning_data), *warning_data_len, "%d:", *warning_data_len);
+	warning_data_ptr = (uint8_t *)strchr((char *)(*warning_data), ':');
+	warning_data_ptr++;
+	memcpy(warning_data_ptr, tlv_box_get_buffer(box), *warning_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int serialize_audit_http1_data(const Packet *p, int template_id, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
 {
 	int ret = TM_ECODE_OK;
@@ -885,6 +916,11 @@ static int create_enip_study_data(const Packet *p, int template_id, enip_ht_item
 	return serialize_study_enip_data(p, template_id, enip, study_data, study_data_len);
 }
 
+static int create_enip_warning_data(const Packet *p, int template_id, enip_ht_item_t *enip, uint8_t **warning_data, int *warning_data_len)
+{
+	return serialize_warning_enip_data(p, template_id, enip, warning_data, warning_data_len);
+}
+
 static int create_http1_audit_data(const Packet *p, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_http1_data(p, 0, http1, audit_data, audit_data_len);
@@ -996,6 +1032,14 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 					if (ret != TM_ECODE_OK)
 						goto out;
 					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
+					break;
+				case ICS_MODE_WARNING:
+					if (ics_adu->flags & ICS_ADU_WARNING_INVALID_FLAG) {
+						ret = create_enip_warning_data(p, ics_adu->template_id, ics_adu->warning.enip, &warning_data, &warning_data_len);
+						if (ret != TM_ECODE_OK)
+							goto out;
+						ICSSendRedisLog(c, ICS_MODE_WARNING, warning_data, warning_data_len);
+					}
 					break;
 				default:
 					break;

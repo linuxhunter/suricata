@@ -29,6 +29,9 @@ static int init_ics_hashtables(void)
 			case TRDP:
 				ret = init_trdp_hashtable(&global_ics_hashtables[i].hashtable, ICS_HASHTABLE_SIZE);
 				break;
+			case ENIP:
+				ret = init_enip_hashtable(&global_ics_hashtables[i].hashtable, ICS_HASHTABLE_SIZE);
+				break;
 			default:
 				continue;
 		}
@@ -59,6 +62,13 @@ static int create_ics_hashtables(intmax_t template_id)
 				SCMutexLock(&global_ics_hashtables[TRDP].mutex);
 				create_trdp_hashtable(global_ics_hashtables[TRDP].hashtable, template_id);
 				SCMutexUnlock(&global_ics_hashtables[TRDP].mutex);
+				break;
+			case ENIP:
+				SCMutexLock(&global_ics_hashtables[ENIP].mutex);
+				create_enip_hashtable(global_ics_hashtables[ENIP].hashtable, template_id);
+				SCMutexUnlock(&global_ics_hashtables[ENIP].mutex);
+
+				break;
 			default:
 				break;
 		}
@@ -170,6 +180,11 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 					if (ics_adu->study.enip == NULL)
 						goto error;
 					memset(ics_adu->study.enip, 0x00, sizeof(enip_ht_items_t));
+				} else if (work_mode == ICS_MODE_WARNING) {
+					ics_adu->warning.enip = SCMalloc(sizeof(enip_ht_item_t));
+					if (ics_adu->warning.enip == NULL)
+						goto error;
+					memset(ics_adu->warning.enip, 0x00, sizeof(enip_ht_item_t));
 				}
 			}
 			break;
@@ -279,6 +294,11 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 					SCFree(ics_adu->study.enip);
 					ics_adu->study.enip = NULL;
 				}
+			} else if (global_ics_work_mode == ICS_MODE_WARNING) {
+				if (ics_adu->warning.enip != NULL) {
+					SCFree(ics_adu->warning.enip);
+					ics_adu->warning.enip = NULL;
+				}
 			}
 			break;
 		case ALPROTO_HTTP1:
@@ -376,6 +396,9 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 				ret = detect_get_enip_study_data(p, ics_adu->audit.enip, ics_adu->study.enip);
 				if (ret != TM_ECODE_OK)
 					goto out;
+			} else if (ics_adu->work_mode == ICS_MODE_WARNING) {
+				if (detect_get_enip_warning_data(global_ics_hashtables[ENIP].hashtable, p, ics_adu->audit.enip, ics_adu->warning.enip) == 0)
+					ics_adu->flags |= ICS_ADU_WARNING_INVALID_FLAG;
 			}
 			break;
 		case ALPROTO_HTTP1:

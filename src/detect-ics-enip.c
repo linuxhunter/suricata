@@ -35,6 +35,149 @@ static uint64_t ENIPGetTxCnt(void *alstate)
 	return ((ENIPState *)alstate)->transaction_max;
 }
 
+static enip_ht_item_t* alloc_enip_ht_item(uint32_t sip, uint32_t dip ,uint8_t proto,
+	uint16_t command, uint32_t session, uint32_t conn_id, uint8_t service, uint8_t class)
+{
+	enip_ht_item_t *enip_item = NULL;
+
+	if ((enip_item = SCMalloc(sizeof(enip_ht_item_t))) == NULL) {
+		goto out;
+	}
+	enip_item->sip = sip;
+	enip_item->dip = dip;
+	enip_item->proto = proto;
+	enip_item->command = command;
+	enip_item->session = session;
+	enip_item->conn_id = conn_id;
+	enip_item->service = service;
+	enip_item->class = class;
+out:
+	return enip_item;
+}
+
+static void free_enip_ht_item(enip_ht_item_t *enip_item)
+{
+	if (enip_item)
+		SCFree(enip_item);
+	return;
+}
+
+static uint32_t ics_enip_hashfunc(HashTable *ht, void *data, uint16_t datalen)
+{
+	return HashTableGenericHash(ht, data, datalen);
+}
+
+static char ics_enip_hash_comparefunc(void *data1, uint16_t data1_len,
+	void *data2, uint16_t data2_len)
+{
+	char ret = 0;
+	enip_ht_item_t *item1 = (enip_ht_item_t *)data1;
+	enip_ht_item_t *item2 = (enip_ht_item_t *)data2;
+
+	if (item1 == NULL || item2 == NULL)
+		goto out;
+	if (item1->sip == item2->sip &&
+		item1->dip == item2->dip &&
+		item1->proto == item2->proto &&
+		item1->command == item2->command &&
+		item1->session == item2->session &&
+		item1->conn_id == item2->conn_id &&
+		item1->service == item2->service &&
+		item1->class == item2->class) {
+		ret = 1;
+		goto out;
+	}
+out:
+	return ret;
+}
+
+static void ics_enip_hashfree(void *data)
+{
+	free_enip_ht_item(data);
+}
+
+static int add_enip_ht_item(HashTable *ht, enip_ht_item_t *enip_item)
+{
+    int ret = TM_ECODE_OK;
+
+    if (HashTableLookup(ht, enip_item, 0) == NULL) {
+        if (HashTableAdd(ht, enip_item, 0) < 0) {
+            SCLogNotice("add ENIP hashtable item error.\n");
+            ret = TM_ECODE_FAILED;
+            goto out;
+        }
+    } else {
+        SCLogNotice("Duplicate ENIP hashtable item.\n");
+        free_enip_ht_item(enip_item);
+    }
+out:
+    return ret;
+}
+
+int init_enip_hashtable(HashTable **ht, uint32_t size)
+{
+    *ht = HashTableInit(size, ics_enip_hashfunc, ics_enip_hash_comparefunc, ics_enip_hashfree);
+    if (*ht != NULL)
+        return TM_ECODE_OK;
+    else
+        return TM_ECODE_FAILED;
+}
+
+int create_enip_hashtable(HashTable *ht, intmax_t template_id)
+{
+	int status = 0, len;
+	enip_ht_item_t *enip_item = NULL;
+	sql_handle handle = NULL;
+	char query[SQL_QUERY_SIZE] = {0};
+	MYSQL_RES *results=NULL;
+	MYSQL_ROW record;
+	uint32_t sip, dip, session, conn_id;
+	uint8_t proto, service, class;
+	uint16_t command;
+
+	if ((handle = sql_db_connect(DB_NAME)) == NULL) {
+		SCLogNotice("connect database study_modbus_table error.\n");
+		goto out;
+	}
+	len = snprintf(query, sizeof(query), "select src_ip,dst_ip,proto,command,session,conn_id,service,class from study_enip_table where template_id='%ld';", template_id);
+
+	status = sql_real_query(handle, query, len);
+	if (status != 0) {
+		SCLogNotice("query enip whitelist with template_id %ld error.\n", template_id);
+		goto out;
+	}
+	results = mysql_use_result(handle);
+	if (results == NULL) {
+		SCLogNotice("get enip whitelist with template_id %ld error.\n", template_id);
+		goto out;
+	}
+	while((record = mysql_fetch_row(results))) {
+		sip = strtoul(record[0], NULL, 10);
+		dip = strtoul(record[1], NULL, 10);
+		proto = strtoul(record[2], NULL, 10);
+		command = strtoul(record[3], NULL, 10);
+		session = strtoul(record[4], NULL, 10);
+		conn_id = strtoul(record[5], NULL, 10);
+		service = strtoul(record[6], NULL, 10);
+		class = strtoul(record[7], NULL, 10);
+
+		if ((enip_item = alloc_enip_ht_item(sip, dip, proto, command, session, conn_id, service, class)) == NULL) {
+			SCLogNotice("Alloc ENIP Item error.\n");
+			goto out;
+		}
+		if (add_enip_ht_item(ht, enip_item) != TM_ECODE_OK) {
+			SCLogNotice("Insert ENIP Item to HashTable error.\n");
+			goto out;
+		}
+		SCLogNotice("sip = %u, dip = %u, proto = %u, command = %u, session = %u, conn_id = %u, service = %u, class = %u\n",
+			sip, dip, proto, command, session, conn_id, service, class);
+	}
+out:
+	if (handle)
+		sql_db_disconnect(handle);
+	return 0;
+}
+
 int detect_get_enip_audit_data(Packet *p, ics_enip_t *ics_enip)
 {
 	int ret = TM_ECODE_OK;
@@ -140,6 +283,67 @@ int detect_get_enip_study_data(Packet *p, ics_enip_t *audit_enip, enip_ht_items_
 	}
 out:
 	return ret;
+}
+
+static int __match_enip_ht_item(HashTable *ht, enip_ht_item_t *enip_item)
+{
+    int matched = 0;
+
+    if (HashTableLookup(ht, enip_item, 0) == NULL) {
+        matched = 0;
+    } else {
+        matched = 1;
+    }
+    return matched;
+}
+
+int detect_get_enip_warning_data(HashTable *ht, Packet *p, ics_enip_t *audit_enip, enip_ht_item_t *warning_enip)
+{
+	int matched = 0;
+	uint32_t sip, dip, session, conn_id;
+	uint8_t proto, service, class;
+	uint16_t command;
+	enip_ht_item_t *enip_item = NULL;
+
+	sip = GET_IPV4_SRC_ADDR_U32(p);
+	dip = GET_IPV4_DST_ADDR_U32(p);
+	proto = IP_GET_IPPROTO(p);
+	for (uint32_t i = 0; i < audit_enip->enip_service_count; i++) {
+		command = audit_enip->enip_services[i].command;
+		session = audit_enip->enip_services[i].session;
+		conn_id = audit_enip->enip_services[i].conn_id;
+		if (audit_enip->enip_services[i].cip_service_count > 0) {
+			for (uint8_t j = 0; j < audit_enip->enip_services[i].cip_service_count; j++) {
+				service = audit_enip->enip_services[i].cip_services[j].service;
+				class = audit_enip->enip_services[i].cip_services[j].class;
+				if ((enip_item = alloc_enip_ht_item(sip, dip, proto, command, session, conn_id, service, class)) == NULL) {
+					matched = 1;
+					goto out;
+				}
+				if (__match_enip_ht_item(ht, enip_item) == 0) {
+					memcpy(warning_enip, enip_item, sizeof(enip_ht_item_t));
+					goto out;
+				}
+			}
+		} else {
+			service = 0;
+			class = 0;
+			if ((enip_item = alloc_enip_ht_item(sip, dip, proto, command, session, conn_id, service, class)) == NULL) {
+				matched = 1;
+				goto out;
+			}
+			if (__match_enip_ht_item(ht, enip_item) == 0) {
+				memcpy(warning_enip, enip_item, sizeof(enip_ht_item_t));
+				goto out;
+			}
+		}
+	}
+	matched = 1;
+out:
+	if (enip_item) {
+		free_enip_ht_item(enip_item);
+	}
+	return matched;
 }
 
 void display_enip_audit_data(ics_enip_t *ics_enip)
