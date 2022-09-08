@@ -650,6 +650,60 @@ out:
 	return ret;
 }
 
+#define ENIP_DATA_BUFFER_LENGTH		4096
+static int serialize_study_enip_data(const Packet *p, int template_id, enip_ht_items_t *enip, uint8_t **study_data, int *study_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *study_data_ptr = NULL;
+	MemBuffer *enip_data_buffer = NULL;
+
+	if (enip->enip_ht_count == 0) {
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	box = serialize_study_common_data(p, template_id);
+	tlv_box_put_uchar(box, APP_PROTO, ENIP);
+	enip_data_buffer = MemBufferCreateNew(ENIP_DATA_BUFFER_LENGTH);
+	if (enip_data_buffer == NULL) {
+		SCLogNotice("create ENIP Data MemBuffer error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	MemBufferWriteRaw(enip_data_buffer, &enip->enip_ht_count, sizeof(uint32_t));
+	for (uint32_t i = 0; i < enip->enip_ht_count; i++) {
+		if (MEMBUFFER_OFFSET(enip_data_buffer) + sizeof(uint16_t) + sizeof(uint32_t)*2 + sizeof(uint8_t)*2 >= MEMBUFFER_SIZE(enip_data_buffer))
+			MemBufferExpand(&enip_data_buffer, ENIP_DATA_BUFFER_LENGTH);
+		MemBufferWriteRaw(enip_data_buffer, &enip->items[i].command, sizeof(uint16_t));
+		MemBufferWriteRaw(enip_data_buffer, &enip->items[i].session, sizeof(uint32_t));
+		MemBufferWriteRaw(enip_data_buffer, &enip->items[i].conn_id, sizeof(uint32_t));
+		MemBufferWriteRaw(enip_data_buffer, &enip->items[i].service, sizeof(uint8_t));
+		MemBufferWriteRaw(enip_data_buffer, &enip->items[i].class, sizeof(uint8_t));
+	}
+	tlv_box_put_bytes(box, ENIP_STUDY_DATA, MEMBUFFER_BUFFER(enip_data_buffer), MEMBUFFER_OFFSET(enip_data_buffer));
+	MemBufferFree(enip_data_buffer);
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*study_data_len = tlv_box_get_size(box);
+	if ((*study_data = SCMalloc(*study_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*study_data, 0x00, *study_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*study_data), *study_data_len, "%d:", *study_data_len);
+	study_data_ptr = (uint8_t *)strchr((char *)(*study_data), ':');
+	study_data_ptr++;
+	memcpy(study_data_ptr, tlv_box_get_buffer(box), *study_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
 static int serialize_audit_http1_data(const Packet *p, int template_id, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
 {
 	int ret = TM_ECODE_OK;
@@ -826,6 +880,11 @@ static int create_enip_audit_data(const Packet *p, ics_enip_t *enip, uint8_t **a
 	return serialize_audit_enip_data(p, 0, enip, audit_data, audit_data_len);
 }
 
+static int create_enip_study_data(const Packet *p, int template_id, enip_ht_items_t *enip, uint8_t **study_data, int *study_data_len)
+{
+	return serialize_study_enip_data(p, template_id, enip, study_data, study_data_len);
+}
+
 static int create_http1_audit_data(const Packet *p, ics_http1_t *http1, uint8_t **audit_data, int *audit_data_len)
 {
 	return serialize_audit_http1_data(p, 0, http1, audit_data, audit_data_len);
@@ -931,6 +990,16 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			if (ret != TM_ECODE_OK)
 				goto out;
 			ICSSendRedisLog(c, ICS_MODE_NORMAL, audit_data, audit_data_len);
+			switch(ics_adu->work_mode) {
+				case ICS_MODE_STUDY:
+					ret = create_enip_study_data(p, ics_adu->template_id, ics_adu->study.enip, &study_data, &study_data_len);
+					if (ret != TM_ECODE_OK)
+						goto out;
+					ICSSendRedisLog(c, ICS_MODE_STUDY, study_data, study_data_len);
+					break;
+				default:
+					break;
+			}
 			break;
 		case ALPROTO_HTTP1:
 			ret = create_http1_audit_data(p, ics_adu->audit.http1, &audit_data, &audit_data_len);

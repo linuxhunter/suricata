@@ -49,6 +49,7 @@ typedef struct {
 		modbus_ht_item_t *modbus;
 		dnp3_ht_items_t *dnp3;
 		trdp_ht_item_t *trdp;
+		enip_ht_items_t *enip;
 	}study;
 	union {
 		modbus_ht_item_t *modbus;

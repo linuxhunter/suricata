@@ -24,6 +24,24 @@ typedef struct {
 	enip_service_t enip_services[ENIP_SERVICE_MAX];
 } ics_enip_t;
 
-int detect_get_enip_audit_data(Packet *p, ics_enip_t *ics_enip);
-void display_enip_audit_data(ics_enip_t *ics_enip);
+typedef struct {
+	uint32_t sip;
+	uint32_t dip;
+	uint8_t proto;
+	uint16_t command;
+	uint32_t session;
+	uint32_t conn_id;
+	uint8_t service;
+	uint8_t class;
+} enip_ht_item_t;
+
+typedef struct {
+	uint32_t enip_ht_count;
+	enip_ht_item_t *items;
+} enip_ht_items_t;
+
+int detect_get_enip_audit_data(Packet *p, ics_enip_t *audit_enip);
+int detect_get_enip_study_data(Packet *p, ics_enip_t *audit_enip, enip_ht_items_t *study_enip);
+void display_enip_audit_data(ics_enip_t *audit_enip);
+void display_enip_study_data(enip_ht_items_t *study_enip);
 #endif

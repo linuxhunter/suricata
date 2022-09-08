@@ -86,6 +86,62 @@ out:
 	return ret;
 }
 
+int detect_get_enip_study_data(Packet *p, ics_enip_t *audit_enip, enip_ht_items_t *study_enip)
+{
+	int ret = 0;
+	uint32_t sip, dip, total_count = 0, study_enip_index = 0;
+	uint8_t proto;
+	uint16_t enip_index;
+	uint8_t cip_index;
+
+	sip = GET_IPV4_SRC_ADDR_U32(p);
+	dip = GET_IPV4_DST_ADDR_U32(p);
+	proto = IP_GET_IPPROTO(p);
+
+	for (enip_index = 0; enip_index < audit_enip->enip_service_count; enip_index++) {
+		if (audit_enip->enip_services[enip_index].cip_service_count > 0) {
+			for (cip_index = 0; cip_index < audit_enip->enip_services[enip_index].cip_service_count; cip_index++) {
+				total_count++;
+			}
+		} else {
+			total_count++;
+		}
+	}
+	study_enip->enip_ht_count = total_count;
+	if ((study_enip->items = SCMalloc(sizeof(enip_ht_item_t)*total_count)) == NULL) {
+		ret = -1;
+		goto out;
+	}
+	memset(study_enip->items, 0x00, sizeof(enip_ht_item_t)*total_count);
+	for (enip_index = 0; enip_index < audit_enip->enip_service_count; enip_index++) {
+		if (audit_enip->enip_services[enip_index].cip_service_count > 0) {
+			for (cip_index = 0; cip_index < audit_enip->enip_services[enip_index].cip_service_count; cip_index++) {
+				study_enip->items[study_enip_index].sip = sip;
+				study_enip->items[study_enip_index].dip = dip;
+				study_enip->items[study_enip_index].proto = proto;
+				study_enip->items[study_enip_index].command = audit_enip->enip_services[enip_index].command;
+				study_enip->items[study_enip_index].session = audit_enip->enip_services[enip_index].session;
+				study_enip->items[study_enip_index].conn_id = audit_enip->enip_services[enip_index].conn_id;
+				study_enip->items[study_enip_index].service = audit_enip->enip_services[enip_index].cip_services[cip_index].service;
+				study_enip->items[study_enip_index].class = audit_enip->enip_services[enip_index].cip_services[cip_index].class;
+				study_enip_index++;
+			}
+		} else {
+			study_enip->items[study_enip_index].sip = sip;
+			study_enip->items[study_enip_index].dip = dip;
+			study_enip->items[study_enip_index].proto = proto;
+			study_enip->items[study_enip_index].command = audit_enip->enip_services[enip_index].command;
+			study_enip->items[study_enip_index].session = audit_enip->enip_services[enip_index].session;
+			study_enip->items[study_enip_index].conn_id = audit_enip->enip_services[enip_index].conn_id;
+			study_enip->items[study_enip_index].service = 0;
+			study_enip->items[study_enip_index].class = 0;
+			study_enip_index++;
+		}
+	}
+out:
+	return ret;
+}
+
 void display_enip_audit_data(ics_enip_t *ics_enip)
 {
 	for (uint16_t i = 0; i < ics_enip->enip_service_count; i++) {
@@ -100,5 +156,24 @@ void display_enip_audit_data(ics_enip_t *ics_enip)
 		}
 		SCLogNotice("---------------------------------------------");
 	}
+}
+
+void display_enip_study_data(enip_ht_items_t *study_enip)
+{
+	char buffer[4096] = {0};
+
+	for (uint32_t i = 0; i < study_enip->enip_ht_count; i++) {
+		snprintf(buffer, sizeof(buffer), "sip = %x, dip = %x, proto = %x, command = %u, session = %u, conn_id = %u, service = %u, class = %u\n",
+			study_enip->items[i].sip,
+			study_enip->items[i].dip,
+			study_enip->items[i].proto,
+			study_enip->items[i].command,
+			study_enip->items[i].session,
+			study_enip->items[i].conn_id,
+			study_enip->items[i].service,
+			study_enip->items[i].class);
+		SCLogNotice("[%u]: %s", i, buffer);
+	}
+	return;
 }
 

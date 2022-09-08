@@ -165,6 +165,12 @@ void* detect_create_ics_adu(ics_mode_t work_mode, Flow *f, intmax_t template_id)
 				if (ics_adu->audit.enip == NULL)
 					goto error;
 				memset(ics_adu->audit.enip, 0x00, sizeof(ics_enip_t));
+				if (work_mode == ICS_MODE_STUDY) {
+					ics_adu->study.enip = SCMalloc(sizeof(enip_ht_items_t));
+					if (ics_adu->study.enip == NULL)
+						goto error;
+					memset(ics_adu->study.enip, 0x00, sizeof(enip_ht_items_t));
+				}
 			}
 			break;
 		case ALPROTO_HTTP1:
@@ -268,6 +274,12 @@ void detect_free_ics_adu(Flow *f, enum AppProtoEnum proto)
 				SCFree(ics_adu->audit.enip);
 				ics_adu->audit.enip = NULL;
 			}
+			if (global_ics_work_mode == ICS_MODE_STUDY) {
+				if (ics_adu->study.enip != NULL) {
+					SCFree(ics_adu->study.enip);
+					ics_adu->study.enip = NULL;
+				}
+			}
 			break;
 		case ALPROTO_HTTP1:
 			if (ics_adu->audit.http1 != NULL) {
@@ -360,6 +372,11 @@ int detect_get_ics_adu(Packet *p, ics_adu_t *ics_adu)
 			ret = detect_get_enip_audit_data(p, ics_adu->audit.enip);
 			if (ret != TM_ECODE_OK)
 				goto out;
+			if (ics_adu->work_mode == ICS_MODE_STUDY) {
+				ret = detect_get_enip_study_data(p, ics_adu->audit.enip, ics_adu->study.enip);
+				if (ret != TM_ECODE_OK)
+					goto out;
+			}
 			break;
 		case ALPROTO_HTTP1:
 			ret = detect_get_http1_audit_data(p, ics_adu->audit.http1);
