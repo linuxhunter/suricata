@@ -164,6 +164,8 @@
 #include "util-daemon.h"
 #include "util-byte.h"
 #include "util-luajit.h"
+#include "util-landlock.h"
+
 #include "reputation.h"
 
 #include "output.h"
@@ -2916,6 +2918,8 @@ int SuricataMain(int argc, char **argv)
     CoredumpEnable();
 
     PreRunPostPrivsDropInit(suricata.run_mode);
+
+    LandlockSandboxing(&suricata);
 
     PostConfLoadedDetectSetup(&suricata);
     if (suricata.run_mode == RUNMODE_ENGINE_ANALYSIS) {

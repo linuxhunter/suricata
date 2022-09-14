@@ -298,6 +298,8 @@ noinst_HEADERS = \
 	detect-snmp-usm.h \
 	detect-snmp-version.h \
 	detect-dhcp-leasetime.h \
+	detect-dhcp-rebinding-time.h \
+	detect-dhcp-renewal-time.h \
 	detect-ssh-hassh.h \
 	detect-ssh-hassh-server.h \
 	detect-ssh-hassh-server-string.h \
@@ -554,6 +556,7 @@ noinst_HEADERS = \
 	util-ioctl.h \
 	util-ip.h \
 	util-ja3.h \
+	util-landlock.h \
 	util-logopenfile.h \
 	util-log-redis.h \
 	util-lua-common.h \
@@ -907,6 +910,8 @@ libsuricata_c_a_SOURCES = \
 	detect-snmp-usm.c \
 	detect-snmp-version.c \
 	detect-dhcp-leasetime.c \
+	detect-dhcp-rebinding-time.c \
+	detect-dhcp-renewal-time.c \
 	detect-ssh-hassh.c \
 	detect-ssh-hassh-server.c \
 	detect-ssh-hassh-server-string.c \
@@ -1149,6 +1154,7 @@ libsuricata_c_a_SOURCES = \
 	util-ioctl.c \
 	util-ip.c \
 	util-ja3.c \
+	util-landlock.c \
 	util-logopenfile.c \
 	util-log-redis.c \
 	util-lua.c \
