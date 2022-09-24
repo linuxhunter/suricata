@@ -2,7 +2,6 @@
 #include "detect.h"
 #include "flow.h"
 #include "conf.h"
-#include "debug.h"
 #include "util-debug.h"
 #include "util-buffer.h"
 #include "decode.h"
