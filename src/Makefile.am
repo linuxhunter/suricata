@@ -66,7 +66,6 @@ noinst_HEADERS = \
 	datasets-reputation.h \
 	datasets-sha256.h \
 	datasets-string.h \
-	debug.h \
 	decode-chdlc.h \
 	decode-erspan.h \
 	decode-esp.h \
@@ -169,6 +168,7 @@ noinst_HEADERS = \
 	detect-filestore.h \
 	detect-flowbits.h \
 	detect-flow.h \
+	detect-flow-age.h \
 	detect-flowint.h \
 	detect-flowvar.h \
 	detect-fragbits.h \
@@ -783,6 +783,7 @@ libsuricata_c_a_SOURCES = \
 	detect-filestore.c \
 	detect-flowbits.c \
 	detect-flow.c \
+	detect-flow-age.c \
 	detect-flowint.c \
 	detect-flowvar.c \
 	detect-fragbits.c \
@@ -1276,11 +1277,6 @@ EXTRA_DIST = \
 	tests/detect-tls-cert-subject.c \
 	tests/detect-tls-cert-validity.c \
 	tests/detect-tls-certs.c \
-	tests/detect-tls-ja3-hash.c \
-	tests/detect-tls-ja3-string.c \
-	tests/detect-tls-ja3s-hash.c \
-	tests/detect-tls-ja3s-string.c \
-	tests/detect-tls-sni.c \
 	tests/detect-tls-version.c \
 	tests/detect.c \
 	tests/stream-tcp.c

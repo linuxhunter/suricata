@@ -24,7 +24,6 @@
 
 #include "suricata-common.h"
 #include "threads.h"
-#include "debug.h"
 #include "decode.h"
 
 #include "detect.h"
@@ -47,6 +46,7 @@
 
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
+#include "util-profiling.h"
 
 #include "app-layer.h"
 #include "app-layer-parser.h"
@@ -560,6 +560,7 @@ static void PrefilterTxFilemagic(DetectEngineThreadCtx *det_ctx,
                 (void)mpm_table[mpm_ctx->mpm_type].Search(mpm_ctx,
                         &det_ctx->mtcu, &det_ctx->pmq,
                         buffer->inspect, buffer->inspect_len);
+                PREFILTER_PROFILING_ADD_BYTES(det_ctx, buffer->inspect_len);
             }
             local_file_id++;
         }

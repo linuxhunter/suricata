@@ -45,6 +45,7 @@ enum {
     TLS_DECODER_EVENT_INVALID_TLS_HEADER,
     TLS_DECODER_EVENT_INVALID_RECORD_VERSION,
     TLS_DECODER_EVENT_INVALID_RECORD_TYPE,
+    TLS_DECODER_EVENT_INVALID_RECORD_LENGTH,
     TLS_DECODER_EVENT_INVALID_HANDSHAKE_MESSAGE,
     TLS_DECODER_EVENT_HEARTBEAT,
     TLS_DECODER_EVENT_INVALID_HEARTBEAT,
@@ -134,6 +135,8 @@ enum {
 /* flag to indicate that client random was filled */
 #define TLS_TC_RANDOM_SET BIT_U32(25)
 
+#define SSL_AL_FLAG_NEED_CLIENT_CERT BIT_U32(26)
+
 /* config flags */
 #define SSL_TLS_LOG_PEM                         (1 << 0)
 
@@ -185,6 +188,39 @@ enum {
     TLS_VERSION_13_DRAFT26_FB = 0xfb1a,
 };
 
+static inline bool TLSVersionValid(const uint16_t version)
+{
+    switch (version) {
+        case TLS_VERSION_13:
+        case TLS_VERSION_12:
+        case TLS_VERSION_11:
+        case TLS_VERSION_10:
+        case SSL_VERSION_3:
+
+        case TLS_VERSION_13_DRAFT28:
+        case TLS_VERSION_13_DRAFT27:
+        case TLS_VERSION_13_DRAFT26:
+        case TLS_VERSION_13_DRAFT25:
+        case TLS_VERSION_13_DRAFT24:
+        case TLS_VERSION_13_DRAFT23:
+        case TLS_VERSION_13_DRAFT22:
+        case TLS_VERSION_13_DRAFT21:
+        case TLS_VERSION_13_DRAFT20:
+        case TLS_VERSION_13_DRAFT19:
+        case TLS_VERSION_13_DRAFT18:
+        case TLS_VERSION_13_DRAFT17:
+        case TLS_VERSION_13_DRAFT16:
+        case TLS_VERSION_13_PRE_DRAFT16:
+        case TLS_VERSION_13_DRAFT20_FB:
+        case TLS_VERSION_13_DRAFT21_FB:
+        case TLS_VERSION_13_DRAFT22_FB:
+        case TLS_VERSION_13_DRAFT23_FB:
+        case TLS_VERSION_13_DRAFT26_FB:
+            return true;
+    }
+    return false;
+}
+
 typedef struct SSLCertsChain_ {
     uint8_t *cert_data;
     uint32_t cert_len;
@@ -199,7 +235,6 @@ typedef struct SSLStateConnp_ {
     uint32_t record_lengths_length;
 
     /* offset of the beginning of the current message (including header) */
-    uint32_t message_start;
     uint32_t message_length;
 
     uint16_t version;
@@ -210,8 +245,6 @@ typedef struct SSLStateConnp_ {
 
     /* the no of bytes processed in the currently parsed record */
     uint32_t bytes_processed;
-    /* the no of bytes processed in the currently parsed handshake */
-    uint16_t hs_bytes_processed;
 
     uint16_t session_id_length;
 
@@ -230,16 +263,21 @@ typedef struct SSLStateConnp_ {
 
     TAILQ_HEAD(, SSLCertsChain_) certs;
 
+    uint8_t *certs_buffer;
+    uint32_t certs_buffer_size;
+
     uint32_t cert_log_flag;
 
     JA3Buffer *ja3_str;
     char *ja3_hash;
 
-    /* buffer for the tls record.
-     * We use a malloced buffer, if the record is fragmented */
-    uint8_t *trec;
-    uint32_t trec_len;
-    uint32_t trec_pos;
+    /* handshake tls fragmentation buffer. Handshake messages can be fragmented over multiple
+     * TLS records. */
+    uint8_t *hs_buffer;
+    uint8_t hs_buffer_message_type;
+    uint32_t hs_buffer_message_size;
+    uint32_t hs_buffer_size;   /**< allocation size */
+    uint32_t hs_buffer_offset; /**< write offset */
 } SSLStateConnp;
 
 /**
@@ -270,7 +308,6 @@ typedef struct SSLState_ {
 
 void RegisterSSLParsers(void);
 void SSLParserRegisterTests(void);
-void SSLSetEvent(SSLState *ssl_state, uint8_t event);
 void SSLVersionToString(uint16_t, char *);
 void SSLEnableJA3(void);
 bool SSLJA3IsEnabled(void);
