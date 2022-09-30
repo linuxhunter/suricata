@@ -1087,6 +1087,14 @@ ics-control:
     work-mode: normal
     # ics template id for warning mode
     template-id: 1
+    # ics baseline settings
+    baseline:
+        # baseline timeout(ms)
+        timeout: 1000
+        # packet frequncy
+        packet-frequency: 10
+        bps: 10-20
+        pps: 100-200
 
 # Limit for the maximum number of asn1 frames to decode (default 256)
 asn1-max-frames: 256

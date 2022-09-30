@@ -12,6 +12,11 @@
 #include <hiredis/hiredis.h>
 #include <tlv_box.h>
 
+ics_baseline_info_t global_ics_baseline_info;
+ics_baseline_stat_t global_ics_baseline_stat;
+redisContext *global_redisContext = NULL;
+
+static void update_ics_baseline_stats(ics_proto_t proto, const Packet *p);
 int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p);
 int ICSRadisLogCondition(ThreadVars *t, void *data, const Packet *p);
 TmEcode ICSRadisLogThreadInit(ThreadVars *t, const void *initdata, void **data);
@@ -949,6 +954,7 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 	ics_adu = p->flow->ics_adu;
 	switch(ics_adu->proto) {
 		case ALPROTO_MODBUS:
+			update_ics_baseline_stats(MODBUS, p);
 			ret = create_modbus_audit_data(p, ics_adu->audit.modbus, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
@@ -973,6 +979,7 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			}
 			break;
 		case ALPROTO_DNP3:
+			update_ics_baseline_stats(DNP3, p);
 			ret = create_dnp3_audit_data(p, ics_adu->audit.dnp3, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
@@ -997,6 +1004,7 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			}
 			break;
 		case ALPROTO_TRDP:
+			update_ics_baseline_stats(TRDP, p);
 			ret = create_trdp_audit_data(p, ics_adu->audit.trdp, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
@@ -1021,6 +1029,7 @@ int ICSRadisLogger(ThreadVars *t, void *data, const Packet *p)
 			}
 			break;
 		case ALPROTO_ENIP:
+			update_ics_baseline_stats(ENIP, p);
 			ret = create_enip_audit_data(p, ics_adu->audit.enip, &audit_data, &audit_data_len);
 			if (ret != TM_ECODE_OK)
 				goto out;
@@ -1116,6 +1125,7 @@ TmEcode ICSRadisLogThreadInit(ThreadVars *t, const void *initdata, void **data)
 		ret = TM_ECODE_FAILED;
 		goto out;
 	}
+	global_redisContext = c;
 	*data = (void *)c;
 out:
 	return ret;
@@ -1127,12 +1137,177 @@ TmEcode ICSRadisLogThreadDeinit(ThreadVars *t, void *data)
 
 	if (c != NULL) {
 		redisFree(c);
+		global_redisContext = NULL;
 	}
 	return TM_ECODE_OK;
+}
+
+static void init_ics_baseline_stats(ics_baseline_stat_t *ics_baseline_stat)
+{
+	pthread_mutex_init(&ics_baseline_stat->mutex, NULL);
+	memset(ics_baseline_stat->stats, 0x00, sizeof(ics_baseline_stat->stats));
+	return;
+}
+
+static void get_ics_baseline_info(ics_baseline_info_t *ics_baseline)
+{
+	intmax_t timeout, packet_frequency;
+	const char *bps_val, *pps_val;
+
+	if ((ConfGetInt("ics-control.baseline.timeout", &timeout)) == 1) {
+		if (timeout == 0)
+			ics_baseline->timeout= ICS_BASELINE_DEFAULT_TIMEOUT;
+		else
+			ics_baseline->timeout = timeout;
+	} else {
+		ics_baseline->timeout = ICS_BASELINE_DEFAULT_TIMEOUT;
+	}
+	if ((ConfGetInt("ics-control.baseline.packet-frequency", &packet_frequency)) == 1) {
+		if (packet_frequency == 0)
+			ics_baseline->packet_frequency = ICS_BASELINE_DEFAULT_PACK_FREQ;
+		else
+			ics_baseline->packet_frequency = packet_frequency;
+	} else {
+		ics_baseline->packet_frequency = ICS_BASELINE_DEFAULT_PACK_FREQ;
+	}
+	if ((ConfGet("ics-control.baseline.bps", &bps_val)) == 1) {
+		if (strchr(bps_val, '-') == NULL) {
+			ics_baseline->bps_min = ICS_BASELINE_DEFAULT_BPS_MIN;
+			ics_baseline->bps_max = ICS_BASELINE_DEFAULT_BPS_MAX;
+		} else {
+			sscanf(bps_val, "%u-%u", &ics_baseline->bps_min, &ics_baseline->bps_max);
+		}
+	} else {
+		ics_baseline->bps_min = ICS_BASELINE_DEFAULT_BPS_MIN;
+		ics_baseline->bps_max = ICS_BASELINE_DEFAULT_BPS_MAX;
+	}
+	if ((ConfGet("ics-control.baseline.pps", &pps_val)) == 1) {
+		if (strchr(pps_val, '-') == NULL) {
+			ics_baseline->pps_min = ICS_BASELINE_DEFAULT_PPS_MIN;
+			ics_baseline->pps_max = ICS_BASELINE_DEFAULT_PPS_MAX;
+		} else {
+			sscanf(pps_val, "%u-%u", &ics_baseline->pps_min, &ics_baseline->pps_max);
+		}
+	} else {
+		ics_baseline->pps_min = ICS_BASELINE_DEFAULT_PPS_MIN;
+		ics_baseline->pps_max = ICS_BASELINE_DEFAULT_PPS_MAX;
+	}
+	return;
+}
+
+static void update_ics_baseline_stats(ics_proto_t proto, const Packet *p)
+{
+	pthread_mutex_lock(&global_ics_baseline_stat.mutex);
+	global_ics_baseline_stat.stats[proto].packets++;
+	if (p->ip4h) {
+		global_ics_baseline_stat.stats[proto].bytes += IPV4_GET_IPLEN(p) + sizeof(EthernetHdr);
+	} else if (p->ip6h) {
+		global_ics_baseline_stat.stats[proto].bytes += IPV6_GET_PLEN(p) + sizeof(EthernetHdr);
+	}
+	global_ics_baseline_stat.stats[proto].bytes += p->payload_len;
+	pthread_mutex_unlock(&global_ics_baseline_stat.mutex);
+	return;
+}
+
+static int create_baseline_warning_data(ics_proto_t proto, ics_baseline_warning_data_t *baseline_warning_data,  uint8_t **warning_data, int *warning_data_len)
+{
+	int ret = TM_ECODE_OK;
+	tlv_box_t *box = NULL;
+	uint8_t *warning_data_ptr = NULL;
+
+	box = tlv_box_create();
+	tlv_box_put_int(box, BEGIN, 0);
+	tlv_box_put_uchar(box, APP_PROTO, proto);
+	tlv_box_put_bytes(box, BASELINE_WARNING_DATA, (unsigned char *)baseline_warning_data, sizeof(*baseline_warning_data));
+	if (tlv_box_serialize(box)) {
+		SCLogNotice("tlv box serialized failed.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	*warning_data_len = tlv_box_get_size(box);
+	if ((*warning_data = SCMalloc(*warning_data_len+sizeof(int)+sizeof(char))) == NULL) {
+		SCLogNotice("SCMalloc error.\n");
+		ret = TM_ECODE_FAILED;
+		goto out;
+	}
+	memset(*warning_data, 0x00, *warning_data_len+sizeof(int)+sizeof(char));
+	snprintf((char *)(*warning_data), *warning_data_len, "%d:", *warning_data_len);
+	warning_data_ptr = (uint8_t *)strchr((char *)(*warning_data), ':');
+	warning_data_ptr++;
+	memcpy(warning_data_ptr, tlv_box_get_buffer(box), *warning_data_len);
+out:
+	if (box)
+		tlv_box_destroy(box);
+	return ret;
+}
+
+static void* ics_baseline_info_timeout(void *args)
+{
+	ics_baseline_info_t *ics_baseline = (ics_baseline_info_t *)args;
+	ics_baseline_warning_data_t baseline_warning_data;
+	uint8_t *warning_data = NULL;
+	int warning_data_len;
+	while(1) {
+		pthread_mutex_lock(&global_ics_baseline_stat.mutex);
+		for (uint32_t i = 0; i < sizeof(global_ics_baseline_stat.stats)/sizeof(global_ics_baseline_stat.stats[0]); i++) {
+			if (global_ics_baseline_stat.stats[i].packets > 0 && global_ics_baseline_stat.stats[i].packets > ics_baseline->packet_frequency) {
+				baseline_warning_data.type = BASELINE_PACKET_FREQ;
+				baseline_warning_data.std_min = ics_baseline->packet_frequency;
+				baseline_warning_data.std_max = ics_baseline->packet_frequency;
+				baseline_warning_data.real_value = global_ics_baseline_stat.stats[i].packets;
+				if (create_baseline_warning_data(i, &baseline_warning_data,  &warning_data, &warning_data_len) == TM_ECODE_OK) {
+					if (global_redisContext)
+						ICSSendRedisLog(global_redisContext, ICS_MODE_WARNING, warning_data, warning_data_len);
+				}
+			} else {
+				uint32_t pps = (global_ics_baseline_stat.stats[i].packets * 1000) / ics_baseline->timeout;
+				uint32_t bps = (global_ics_baseline_stat.stats[i].bytes * 1000) / ics_baseline->timeout;
+				if (pps > 0 && (pps < ics_baseline->pps_min || pps > ics_baseline->pps_max)) {
+					baseline_warning_data.type = BASELINE_PPS;
+					baseline_warning_data.std_min = ics_baseline->pps_min;
+					baseline_warning_data.std_max = ics_baseline->pps_max;
+					baseline_warning_data.real_value = pps;
+					if (create_baseline_warning_data(i, &baseline_warning_data, &warning_data, &warning_data_len) == TM_ECODE_OK) {
+						if (global_redisContext)
+							ICSSendRedisLog(global_redisContext, ICS_MODE_WARNING, warning_data, warning_data_len);
+					}
+				} else if (bps > 0 && (bps < ics_baseline->bps_min || bps > ics_baseline->bps_max)) {
+					baseline_warning_data.type = BASELINE_BPS;
+					baseline_warning_data.std_min = ics_baseline->bps_min;
+					baseline_warning_data.std_max = ics_baseline->bps_max;
+					baseline_warning_data.real_value = bps;
+					if (create_baseline_warning_data(i, &baseline_warning_data, &warning_data, &warning_data_len) == TM_ECODE_OK) {
+						if (global_redisContext)
+							ICSSendRedisLog(global_redisContext, ICS_MODE_WARNING, warning_data, warning_data_len);
+					}
+				}
+			}
+			if (warning_data) {
+				SCFree(warning_data);
+				warning_data = NULL;
+			}
+		}
+		memset(global_ics_baseline_stat.stats, 0x00, sizeof(global_ics_baseline_stat.stats));
+		pthread_mutex_unlock(&global_ics_baseline_stat.mutex);
+		usleep(ics_baseline->timeout*1000);
+	}
+	return NULL;
+}
+
+static void create_ics_baseline_info_timeout_thread(ics_baseline_info_t *ics_baseline)
+{
+	pthread_t tid;
+
+	pthread_create(&tid, NULL, ics_baseline_info_timeout, ics_baseline);
+	return;
 }
 
 void ICSRedisLogRegister(void)
 {
 	OutputRegisterPacketModule(LOGGER_RADIS_ICS, MODULE_NAME, "ics-redis",
 		NULL, ICSRadisLogger, ICSRadisLogCondition, ICSRadisLogThreadInit, ICSRadisLogThreadDeinit, NULL);
+
+	init_ics_baseline_stats(&global_ics_baseline_stat);
+	get_ics_baseline_info(&global_ics_baseline_info);
+	create_ics_baseline_info_timeout_thread(&global_ics_baseline_info);
 }
