@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2016 Open Information Security Foundation
+/* Copyright (C) 2007-2021 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -64,7 +64,6 @@
 #include "output-json-stats.h"
 #include "log-tcp-data.h"
 #include "log-stats.h"
-#include "output-json.h"
 #include "output-json-nfs.h"
 #include "output-json-ftp.h"
 #include "output-json-tftp.h"
@@ -87,6 +86,7 @@
 #include "output-json-metadata.h"
 #include "output-json-dcerpc.h"
 #include "output-json-frame.h"
+#include "output-json-bittorrent-dht.h"
 #include "output-filestore.h"
 #include "output-redis-ics.h"
 
@@ -888,7 +888,6 @@ TmEcode OutputLoggerLog(ThreadVars *tv, Packet *p, void *thread_data)
         logger = TAILQ_NEXT(logger, entries);
         thread_store_node = TAILQ_NEXT(thread_store_node, entries);
     }
-
     return TM_ECODE_OK;
 }
 
@@ -1030,9 +1029,9 @@ void TmModuleLoggerRegister(void)
 void OutputRegisterRootLoggers(void)
 {
     OutputPacketLoggerRegister();
-    OutputTxLoggerRegister();
     OutputFiledataLoggerRegister();
     OutputFileLoggerRegister();
+    OutputTxLoggerRegister();
     OutputStreamingLoggerRegister();
 }
 
@@ -1130,4 +1129,6 @@ void OutputRegisterLoggers(void)
     JsonFrameLogRegister();
 	/* ICS Redis logger */
 	ICSRedisLogRegister();
+    /* BitTorrent DHT JSON logger */
+    JsonBitTorrentDHTLogRegister();
 }

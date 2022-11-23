@@ -43,19 +43,6 @@ pub mod nom7 {
     }
 }
 
-#[macro_export]
-macro_rules! take_until_and_consume (
- ( $i:expr, $needle:expr ) => (
-    {
-      let input: &[u8] = $i;
-
-      let (rem, res) = ::nom::take_until!(input, $needle)?;
-      let (rem, _) = ::nom::take!(rem, $needle.len())?;
-      Ok((rem, res))
-    }
-  );
-);
-
 #[cfg(not(feature = "debug-validate"))]
 #[macro_export]
 macro_rules! debug_validate_bug_on (
@@ -119,13 +106,12 @@ pub unsafe extern "C" fn rs_cstring_free(s: *mut c_char) {
 pub fn to_hex(input: &[u8]) -> String {
     return input
         .iter()
-        .map(|b| {
+        .flat_map(|b| {
             vec![
                 char::from(HEX[(b >> 4) as usize]),
                 char::from(HEX[(b & 0xf) as usize]),
             ]
         })
-        .flatten()
         .collect();
 }
 

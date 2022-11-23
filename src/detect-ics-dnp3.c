@@ -82,8 +82,8 @@ int detect_get_dnp3_audit_data(Packet *p, ics_dnp3_t *ics_dnp3)
 		ret = TM_ECODE_FAILED;
 		goto out;
 	}
-	ics_dnp3->function_code = tx->request_ah.function_code;
-	TAILQ_FOREACH(object, &tx->request_objects, next) {
+	ics_dnp3->function_code = tx->ah.function_code;
+	TAILQ_FOREACH(object, &tx->objects, next) {
 		rptr = SCRealloc(ics_dnp3->objects, sizeof(dnp3_object_t)*(ics_dnp3->object_count+1));
 		if (rptr == NULL) {
 			SCLogNotice("Out of Memory for DNP3 Objects\n");

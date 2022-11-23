@@ -25,6 +25,7 @@
  */
 
 #include "suricata-common.h"
+#include "packet.h"
 #include "detect.h"
 #include "flow.h"
 #include "conf.h"
@@ -54,6 +55,8 @@
 #include "util-logopenfile.h"
 #include "util-time.h"
 #include "util-buffer.h"
+
+#include "action-globals.h"
 
 #define MODULE_NAME "JsonDropLog"
 
@@ -91,6 +94,14 @@ static int DropLogJSON (JsonDropLogThread *aft, const Packet *p)
     JsonBuilder *js = CreateEveHeader(p, LOG_DIR_PACKET, "drop", &addr, drop_ctx->eve_ctx);
     if (unlikely(js == NULL))
         return TM_ECODE_OK;
+
+    if (p->flow != NULL) {
+        if (p->flowflags & FLOW_PKT_TOSERVER) {
+            jb_set_string(js, "direction", "to_server");
+        } else {
+            jb_set_string(js, "direction", "to_client");
+        }
+    }
 
     jb_open_object(js, "drop");
 
@@ -354,7 +365,7 @@ static int JsonDropLogCondition(ThreadVars *tv, void *data, const Packet *p)
             ret = TRUE;
 
         return ret;
-    } else if (PacketTestAction(p, ACTION_DROP)) {
+    } else if (PacketCheckAction(p, ACTION_DROP)) {
         return TRUE;
     }
 

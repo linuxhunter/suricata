@@ -32,19 +32,21 @@
  */
 
 #include "suricata-common.h"
+#include "decode.h"
 #include "runmodes.h"
 #include "runmode-netmap.h"
 #include "util-runmodes.h"
 #include "util-ioctl.h"
 #include "util-byte.h"
+#include "util-time.h"
 
 #ifdef HAVE_NETMAP
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
-#include "util-time.h"
 #endif /* HAVE_NETMAP */
 
 #include "source-netmap.h"
+#include "util-conf.h"
 
 extern int max_pending_packets;
 
@@ -371,7 +373,9 @@ int NetmapRunModeIsIPS()
     }
 
     if (has_ids && has_ips) {
-        SCLogInfo("Netmap mode using IPS and IDS mode");
+        SCLogWarning(SC_ERR_INVALID_ARGUMENT,
+                "Netmap using both IPS and TAP/IDS mode, this will not be "
+                "allowed in Suricata 8 due to undefined behavior. See ticket #5588.");
         for (ldev = 0; ldev < nlive; ldev++) {
             const char *live_dev = LiveGetDeviceName(ldev);
             if (live_dev == NULL) {

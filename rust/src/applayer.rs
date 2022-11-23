@@ -71,7 +71,7 @@ impl StreamSlice {
 }
 
 #[repr(C)]
-#[derive(Default, Debug,PartialEq)]
+#[derive(Default, Debug,PartialEq, Eq)]
 pub struct AppLayerTxConfig {
     /// config: log flags
     log_flags: u8,
@@ -96,7 +96,7 @@ impl AppLayerTxConfig {
 }
 
 #[repr(C)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct AppLayerTxData {
     /// config: log flags
     pub config: AppLayerTxConfig,
@@ -108,6 +108,15 @@ pub struct AppLayerTxData {
     pub files_opened: u32,
     pub files_logged: u32,
     pub files_stored: u32,
+
+    pub file_flags: u16,
+
+    /// Indicated if a file tracking tx, and if so in which direction:
+    ///  0: not a file tx
+    /// STREAM_TOSERVER: file tx, files only in toserver dir
+    /// STREAM_TOCLIENT: file tx , files only in toclient dir
+    /// STREAM_TOSERVER|STREAM_TOCLIENT: files possible in both dirs
+    pub file_tx: u8,
 
     /// detection engine flags for use by detection engine
     detect_flags_ts: u64,
@@ -125,10 +134,10 @@ impl Default for AppLayerTxData {
 
 impl Drop for AppLayerTxData {
     fn drop(&mut self) {
-        if self.de_state != std::ptr::null_mut() {
+        if !self.de_state.is_null() {
             core::sc_detect_engine_state_free(self.de_state);
         }
-        if self.events != std::ptr::null_mut() {
+        if !self.events.is_null() {
             core::sc_app_layer_decoder_events_free_events(&mut self.events);
         }
     }
@@ -142,6 +151,8 @@ impl AppLayerTxData {
             files_opened: 0,
             files_logged: 0,
             files_stored: 0,
+            file_flags: 0,
+            file_tx: 0,
             detect_flags_ts: 0,
             detect_flags_tc: 0,
             de_state: std::ptr::null_mut(),
@@ -156,7 +167,14 @@ impl AppLayerTxData {
     }
 
     pub fn set_event(&mut self, event: u8) {
-        core::sc_app_layer_decoder_events_set_event_raw(&mut self.events, event as u8);
+        core::sc_app_layer_decoder_events_set_event_raw(&mut self.events, event);
+    }
+
+    pub fn update_file_flags(&mut self, state_flags: u16) {
+        if (self.file_flags & state_flags) != state_flags {
+            SCLogDebug!("updating tx file_flags {:04x} with state flags {:04x}", self.file_flags, state_flags);
+            self.file_flags |= state_flags;
+        }
     }
 }
 
@@ -165,7 +183,7 @@ macro_rules!export_tx_data_get {
     ($name:ident, $type:ty) => {
         #[no_mangle]
         pub unsafe extern "C" fn $name(tx: *mut std::os::raw::c_void)
-            -> *mut crate::applayer::AppLayerTxData
+            -> *mut $crate::applayer::AppLayerTxData
         {
             let tx = &mut *(tx as *mut $type);
             &mut tx.tx_data
@@ -174,7 +192,37 @@ macro_rules!export_tx_data_get {
 }
 
 #[repr(C)]
-#[derive(Default,Debug,PartialEq,Copy,Clone)]
+#[derive(Default,Debug,PartialEq, Eq,Copy,Clone)]
+pub struct AppLayerStateData {
+    pub file_flags: u16,
+}
+
+impl AppLayerStateData {
+    pub fn new() -> Self {
+        Self {
+            file_flags: 0,
+        }
+    }
+    pub fn update_file_flags(&mut self, flags: u16) {
+        self.file_flags |= flags;
+    }
+}
+
+#[macro_export]
+macro_rules!export_state_data_get {
+    ($name:ident, $type:ty) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(state: *mut std::os::raw::c_void)
+            -> *mut $crate::applayer::AppLayerStateData
+        {
+            let state = &mut *(state as *mut $type);
+            &mut state.state_data
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Default,Debug,PartialEq, Eq,Copy,Clone)]
 pub struct AppLayerResult {
     pub status: i32,
     pub consumed: u32,
@@ -202,8 +250,8 @@ impl AppLayerResult {
     pub fn incomplete(consumed: u32, needed: u32) -> Self {
         return Self {
             status: 1,
-            consumed: consumed,
-            needed: needed,
+            consumed,
+            needed,
         };
     }
 
@@ -220,7 +268,7 @@ impl AppLayerResult {
 
 impl From<bool> for AppLayerResult {
     fn from(v: bool) -> Self {
-        if v == false {
+        if !v {
             Self::err()
         } else {
             Self::ok()
@@ -292,11 +340,12 @@ pub struct RustParser {
     pub localstorage_free:  Option<LocalStorageFreeFn>,
 
     /// Function to get files
-    pub get_files:          Option<GetFilesFn>,
+    pub get_tx_files:       Option<GetTxFilesFn>,
 
     /// Function to get the TX iterator
     pub get_tx_iterator:    Option<GetTxIteratorFn>,
 
+    pub get_state_data: GetStateDataFn,
     pub get_tx_data: GetTxDataFn,
 
     // Function to apply config to a TX. Optional. Normal (bidirectional)
@@ -347,8 +396,7 @@ pub type GetEventInfoFn     = unsafe extern "C" fn (*const c_char, *mut c_int, *
 pub type GetEventInfoByIdFn = unsafe extern "C" fn (c_int, *mut *const c_char, *mut AppLayerEventType) -> i8;
 pub type LocalStorageNewFn  = extern "C" fn () -> *mut c_void;
 pub type LocalStorageFreeFn = extern "C" fn (*mut c_void);
-pub type GetFilesFn         = unsafe
-extern "C" fn (*mut c_void, u8) -> *mut FileContainer;
+pub type GetTxFilesFn       = unsafe extern "C" fn (*mut c_void, u8) -> *mut FileContainer;
 pub type GetTxIteratorFn    = unsafe extern "C" fn (ipproto: u8, alproto: AppProto,
                                              state: *mut c_void,
                                              min_tx_id: u64,
@@ -356,6 +404,7 @@ pub type GetTxIteratorFn    = unsafe extern "C" fn (ipproto: u8, alproto: AppPro
                                              istate: &mut u64)
                                              -> AppLayerGetTxIterTuple;
 pub type GetTxDataFn = unsafe extern "C" fn(*mut c_void) -> *mut AppLayerTxData;
+pub type GetStateDataFn = unsafe extern "C" fn(*mut c_void) -> *mut AppLayerStateData;
 pub type ApplyTxConfigFn = unsafe extern "C" fn (*mut c_void, *mut c_void, c_int, AppLayerTxConfig);
 pub type TruncateFn = unsafe extern "C" fn (*mut c_void, u8);
 pub type GetFrameIdByName = unsafe extern "C" fn(*const c_char) -> c_int;
@@ -382,6 +431,9 @@ extern {
                                                alproto_name: *const c_char, alproto: AppProto,
                                                min_depth: u16, max_depth: u16,
                                                pparser_ts: ProbeFn, pparser_tc: ProbeFn) -> i32;
+    pub fn AppLayerProtoDetectPMRegisterPatternCS(ipproto: u8, alproto: AppProto,
+                                                  pattern: *const c_char, depth: u16,
+                                                  offset: u16, direction: u8) -> c_int;
     pub fn AppLayerProtoDetectPMRegisterPatternCSwPP(ipproto: u8, alproto: AppProto,
                                                      pattern: *const c_char, depth: u16,
                                                      offset: u16, direction: u8, ppfn: ProbeFn,
@@ -392,12 +444,14 @@ extern {
 }
 
 // Defined in app-layer-parser.h
-pub const APP_LAYER_PARSER_EOF_TS : u8 = BIT_U8!(5);
-pub const APP_LAYER_PARSER_EOF_TC : u8 = BIT_U8!(6);
-pub const APP_LAYER_PARSER_NO_INSPECTION : u8 = BIT_U8!(1);
-pub const APP_LAYER_PARSER_NO_REASSEMBLY : u8 = BIT_U8!(2);
-pub const APP_LAYER_PARSER_NO_INSPECTION_PAYLOAD : u8 = BIT_U8!(3);
-pub const APP_LAYER_PARSER_BYPASS_READY : u8 = BIT_U8!(4);
+pub const APP_LAYER_PARSER_NO_INSPECTION : u16 = BIT_U16!(1);
+pub const APP_LAYER_PARSER_NO_REASSEMBLY : u16 = BIT_U16!(2);
+pub const APP_LAYER_PARSER_NO_INSPECTION_PAYLOAD : u16 = BIT_U16!(3);
+pub const APP_LAYER_PARSER_BYPASS_READY : u16 = BIT_U16!(4);
+pub const APP_LAYER_PARSER_EOF_TS : u16 = BIT_U16!(5);
+pub const APP_LAYER_PARSER_EOF_TC : u16 = BIT_U16!(6);
+pub const APP_LAYER_PARSER_TRUNC_TS : u16 = BIT_U16!(7);
+pub const APP_LAYER_PARSER_TRUNC_TC : u16 = BIT_U16!(8);
 
 pub const APP_LAYER_PARSER_OPT_ACCEPT_GAPS: u32 = BIT_U32!(0);
 pub const APP_LAYER_PARSER_OPT_UNIDIR_TXS: u32 = BIT_U32!(1);
@@ -410,8 +464,8 @@ pub type AppLayerGetTxIteratorFn = unsafe extern "C" fn (ipproto: u8,
                                                   istate: &mut u64) -> applayer::AppLayerGetTxIterTuple;
 
 extern {
-    pub fn AppLayerParserStateSetFlag(state: *mut c_void, flag: u8);
-    pub fn AppLayerParserStateIssetFlag(state: *mut c_void, flag: u8) -> c_int;
+    pub fn AppLayerParserStateSetFlag(state: *mut c_void, flag: u16);
+    pub fn AppLayerParserStateIssetFlag(state: *mut c_void, flag: u16) -> u16;
     pub fn AppLayerParserSetStreamDepth(ipproto: u8, alproto: AppProto, stream_depth: u32);
     pub fn AppLayerParserConfParserEnabled(ipproto: *const c_char, proto: *const c_char) -> c_int;
     pub fn AppLayerParserRegisterGetTxIterator(ipproto: u8, alproto: AppProto, fun: AppLayerGetTxIteratorFn);
@@ -428,7 +482,7 @@ pub struct AppLayerGetTxIterTuple {
 impl AppLayerGetTxIterTuple {
     pub fn with_values(tx_ptr: *mut std::os::raw::c_void, tx_id: u64, has_next: bool) -> AppLayerGetTxIterTuple {
         AppLayerGetTxIterTuple {
-            tx_ptr: tx_ptr, tx_id: tx_id, has_next: has_next,
+            tx_ptr, tx_id, has_next,
         }
     }
     pub fn not_found() -> AppLayerGetTxIterTuple {
@@ -440,7 +494,7 @@ impl AppLayerGetTxIterTuple {
 
 /// LoggerFlags tracks which loggers have already been executed.
 #[repr(C)]
-#[derive(Default, Debug,PartialEq)]
+#[derive(Default, Debug,PartialEq, Eq)]
 pub struct LoggerFlags {
     flags: u32,
 }
@@ -529,7 +583,7 @@ pub unsafe fn get_event_info_by_id<T: AppLayerEvent>(
     event_name: *mut *const std::os::raw::c_char,
     event_type: *mut core::AppLayerEventType,
 ) -> i8 {
-    if let Some(e) = T::from_id(event_id as i32) {
+    if let Some(e) = T::from_id(event_id) {
         *event_name = e.to_cstring().as_ptr() as *const std::os::raw::c_char;
         *event_type = core::APP_LAYER_EVENT_TYPE_TRANSACTION;
         return 0;
@@ -611,22 +665,20 @@ pub trait AppLayerFrameType {
     fn to_cstring(&self) -> *const std::os::raw::c_char;
 
     /// Converts a C string formatted name to a frame type ID.
-    extern "C" fn ffi_id_from_name(name: *const std::os::raw::c_char) -> i32 where Self: Sized {
+    unsafe extern "C" fn ffi_id_from_name(name: *const std::os::raw::c_char) -> i32 where Self: Sized {
         if name.is_null() {
             return -1;
         }
-        unsafe {
-            let frame_id = if let Ok(s) = std::ffi::CStr::from_ptr(name).to_str() {
-                Self::from_str(s).map(|t| t.as_u8() as i32).unwrap_or(-1)
-            } else {
-                -1
-            };
-            frame_id
-        }
+        let frame_id = if let Ok(s) = std::ffi::CStr::from_ptr(name).to_str() {
+            Self::from_str(s).map(|t| t.as_u8() as i32).unwrap_or(-1)
+        } else {
+            -1
+        };
+        frame_id
     }
 
     /// Converts a variant ID to an FFI safe name.
     extern "C" fn ffi_name_from_id(id: u8) -> *const std::os::raw::c_char where Self: Sized {
-        Self::from_u8(id).map(|s| s.to_cstring()).unwrap_or_else(|| std::ptr::null())
+        Self::from_u8(id).map(|s| s.to_cstring()).unwrap_or_else(std::ptr::null)
     }
 }

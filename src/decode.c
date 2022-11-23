@@ -48,29 +48,26 @@
  */
 
 #include "suricata-common.h"
-#include "suricata.h"
-#include "conf.h"
 #include "decode.h"
-#include "decode-teredo.h"
-#include "decode-erspan.h"
-#include "decode-geneve.h"
-#include "decode-vxlan.h"
-#include "util-debug.h"
-#include "util-mem.h"
-#include "app-layer-detect-proto.h"
-#include "app-layer.h"
-#include "tm-threads.h"
-#include "util-error.h"
-#include "util-print.h"
-#include "tmqh-packetpool.h"
-#include "util-profiling.h"
-#include "pkt-var.h"
-#include "util-mpm-ac.h"
-#include "util-hash-string.h"
-#include "output.h"
-#include "output-flow.h"
+
+#include "packet.h"
+#include "flow.h"
 #include "flow-storage.h"
+#include "tmqh-packetpool.h"
+#include "app-layer.h"
+#include "output.h"
+
+#include "decode-vxlan.h"
+#include "decode-geneve.h"
+#include "decode-erspan.h"
+#include "decode-teredo.h"
+
+#include "util-hash.h"
+#include "util-hash-string.h"
+#include "util-print.h"
+#include "util-profiling.h"
 #include "util-validate.h"
+#include "action-globals.h"
 
 uint32_t default_packet_size = 0;
 extern bool stats_decoder_events;
@@ -136,7 +133,7 @@ static int DecodeTunnel(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, const 
  */
 void PacketFree(Packet *p)
 {
-    PACKET_DESTRUCTOR(p);
+    PacketDestructor(p);
     SCFree(p);
 }
 
@@ -175,15 +172,12 @@ void PacketUpdateEngineEventCounters(ThreadVars *tv,
  */
 Packet *PacketGetFromAlloc(void)
 {
-    Packet *p = SCMalloc(SIZE_OF_PACKET);
+    Packet *p = SCCalloc(1, SIZE_OF_PACKET);
     if (unlikely(p == NULL)) {
         return NULL;
     }
-
-    memset(p, 0, SIZE_OF_PACKET);
-    PACKET_INITIALIZE(p);
+    PacketInit(p);
     p->ReleasePacket = PacketFree;
-    p->flags |= PKT_ALLOC;
 
     SCLogDebug("allocated a new packet only using alloc...");
 
@@ -196,11 +190,11 @@ Packet *PacketGetFromAlloc(void)
  */
 void PacketFreeOrRelease(Packet *p)
 {
-    if (p->flags & PKT_ALLOC)
-        PacketFree(p);
-    else {
+    if (likely(p->pool != NULL)) {
         p->ReleasePacket = PacketPoolReturnPacket;
         PacketPoolReturnPacket(p);
+    } else {
+        PacketFree(p);
     }
 }
 
@@ -807,18 +801,22 @@ const char *PacketDropReasonToString(enum PacketDropReason r)
             return "rules";
         case PKT_DROP_REASON_RULES_THRESHOLD:
             return "threshold detection_filter";
+        case PKT_DROP_REASON_NFQ_ERROR:
+            return "nfq error";
+        case PKT_DROP_REASON_INNER_PACKET:
+            return "tunnel packet drop";
         case PKT_DROP_REASON_NOT_SET:
-        default:
             return NULL;
     }
+    return NULL;
 }
 
 /* TODO drop reason stats! */
 void CaptureStatsUpdate(ThreadVars *tv, CaptureStats *s, const Packet *p)
 {
-    if (unlikely(PacketTestAction(p, (ACTION_REJECT | ACTION_REJECT_DST | ACTION_REJECT_BOTH)))) {
+    if (unlikely(PacketCheckAction(p, ACTION_REJECT_ANY))) {
         StatsIncr(tv, s->counter_ips_rejected);
-    } else if (unlikely(PacketTestAction(p, ACTION_DROP))) {
+    } else if (unlikely(PacketCheckAction(p, ACTION_DROP))) {
         StatsIncr(tv, s->counter_ips_blocked);
     } else if (unlikely(p->flags & PKT_STREAM_MODIFIED)) {
         StatsIncr(tv, s->counter_ips_replaced);

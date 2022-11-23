@@ -28,6 +28,7 @@
 #include "conf.h"
 
 #include "decode.h"
+#include "packet.h"
 #include "flow.h"
 #include "stream-tcp.h"
 #include "app-layer.h"
@@ -63,6 +64,8 @@
 #include "util-validate.h"
 #include "util-detect.h"
 #include "util-profiling.h"
+
+#include "action-globals.h"
 
 typedef struct DetectRunScratchpad {
     const AppProto alproto;
@@ -921,7 +924,8 @@ static inline void DetectRunPostRules(
     /* see if we need to increment the inspect_id and reset the de_state */
     if (pflow && pflow->alstate) {
         PACKET_PROFILING_DETECT_START(p, PROF_DETECT_TX_UPDATE);
-        DeStateUpdateInspectTransactionId(pflow, scratch->flow_flags, (scratch->sgh == NULL));
+        AppLayerParserSetTransactionInspectId(pflow, pflow->alparser, pflow->alstate,
+                scratch->flow_flags, (scratch->sgh == NULL));
         PACKET_PROFILING_DETECT_END(p, PROF_DETECT_TX_UPDATE);
     }
 
@@ -1661,20 +1665,19 @@ static void DetectFlow(ThreadVars *tv,
                        DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx,
                        Packet *p)
 {
+    Flow *const f = p->flow;
+
     if (p->flags & PKT_NOPACKET_INSPECTION) {
         /* hack: if we are in pass the entire flow mode, we need to still
          * update the inspect_id forward. So test for the condition here,
          * and call the update code if necessary. */
-        const int pass = ((p->flow->flags & FLOW_NOPACKET_INSPECTION));
+        const int pass = ((f->flags & FLOW_NOPACKET_INSPECTION));
         if (pass) {
-            uint8_t flags;
-            if (p->flowflags & FLOW_PKT_TOSERVER) {
-                flags = STREAM_TOSERVER;
-            } else {
-                flags = STREAM_TOCLIENT;
+            uint8_t flags = STREAM_FLAGS_FOR_PACKET(p);
+            flags = FlowGetDisruptionFlags(f, flags);
+            if (f->alstate) {
+                AppLayerParserSetTransactionInspectId(f, f->alparser, f->alstate, flags, true);
             }
-            flags = FlowGetDisruptionFlags(p->flow, flags);
-            DeStateUpdateInspectTransactionId(p->flow, flags, true);
         }
         SCLogDebug("p->pcap %"PRIu64": no detection on packet, "
                 "PKT_NOPACKET_INSPECTION is set", p->pcap_cnt);
@@ -1682,7 +1685,7 @@ static void DetectFlow(ThreadVars *tv,
     }
 
     /* if flow is set to drop, we enforce that here */
-    if (p->flow->flags & FLOW_ACTION_DROP) {
+    if (f->flags & FLOW_ACTION_DROP) {
         PacketDrop(p, ACTION_DROP, PKT_DROP_REASON_FLOW_DROP);
         SCReturn;
     }
@@ -1697,7 +1700,7 @@ static void DetectNoFlow(ThreadVars *tv,
                          Packet *p)
 {
     /* No need to perform any detection on this packet, if the the given flag is set.*/
-    if ((p->flags & PKT_NOPACKET_INSPECTION) || (PacketTestAction(p, ACTION_DROP))) {
+    if ((p->flags & PKT_NOPACKET_INSPECTION) || (PacketCheckAction(p, ACTION_DROP))) {
         return;
     }
 

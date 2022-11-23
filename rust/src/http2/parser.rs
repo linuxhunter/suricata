@@ -17,7 +17,7 @@
 
 use super::huffman;
 use crate::common::nom7::bits;
-use crate::detect::{detect_parse_uint, DetectUintData};
+use crate::detect::uint::{detect_parse_uint, DetectUintData};
 use crate::http2::http2::{HTTP2DynTable, HTTP2_MAX_TABLESIZE};
 use nom7::bits::streaming::take as take_bits;
 use nom7::branch::alt;
@@ -32,7 +32,7 @@ use std::fmt;
 use std::str::FromStr;
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, FromPrimitive, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, FromPrimitive, Debug)]
 pub enum HTTP2FrameType {
     DATA = 0,
     HEADERS = 1,
@@ -57,7 +57,7 @@ impl std::str::FromStr for HTTP2FrameType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let su = s.to_uppercase();
-        let su_slice: &str = &*su;
+        let su_slice: &str = &su;
         match su_slice {
             "DATA" => Ok(HTTP2FrameType::DATA),
             "HEADERS" => Ok(HTTP2FrameType::HEADERS),
@@ -74,7 +74,7 @@ impl std::str::FromStr for HTTP2FrameType {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub struct HTTP2FrameHeader {
     //we could add detection on (GOAWAY) additional data
     pub length: u32,
@@ -103,7 +103,7 @@ pub fn http2_parse_frame_header(i: &[u8]) -> IResult<&[u8], HTTP2FrameHeader> {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, FromPrimitive, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, FromPrimitive, Debug)]
 pub enum HTTP2ErrorCode {
     NOERROR = 0,
     PROTOCOLERROR = 1,
@@ -132,7 +132,7 @@ impl std::str::FromStr for HTTP2ErrorCode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let su = s.to_uppercase();
-        let su_slice: &str = &*su;
+        let su_slice: &str = &su;
         match su_slice {
             "NO_ERROR" => Ok(HTTP2ErrorCode::NOERROR),
             "PROTOCOL_ERROR" => Ok(HTTP2ErrorCode::PROTOCOLERROR),
@@ -293,7 +293,7 @@ fn http2_frame_header_static(n: u64, dyn_headers: &HTTP2DynTable) -> Option<HTTP
         61 => ("www-authenticate", ""),
         _ => ("", ""),
     };
-    if name.len() > 0 {
+    if !name.is_empty() {
         return Some(HTTP2FrameHeaderBlock {
             name: name.as_bytes().to_vec(),
             value: value.as_bytes().to_vec(),
@@ -330,7 +330,7 @@ fn http2_frame_header_static(n: u64, dyn_headers: &HTTP2DynTable) -> Option<HTTP
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialOrd, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialOrd, PartialEq, Eq, Debug)]
 pub enum HTTP2HeaderDecodeStatus {
     HTTP2HeaderDecodeSuccess = 0,
     HTTP2HeaderDecodeSizeUpdate = 1,
@@ -456,7 +456,7 @@ fn http2_parse_headers_block_literal_incindex<'a>(
                 } else {
                     dyn_headers.table.push(headcopy);
                 }
-                while dyn_headers.current_size > dyn_headers.max_size && dyn_headers.table.len() > 0
+                while dyn_headers.current_size > dyn_headers.max_size && !dyn_headers.table.is_empty()
                 {
                     dyn_headers.current_size -=
                         32 + dyn_headers.table[0].name.len() + dyn_headers.table[0].value.len();
@@ -539,7 +539,7 @@ fn http2_parse_headers_block_dynamic_size<'a>(
     if (maxsize2 as usize) < dyn_headers.max_size {
         //dyn_headers.max_size is updated later with all headers
         //may evict entries
-        while dyn_headers.current_size > (maxsize2 as usize) && dyn_headers.table.len() > 0 {
+        while dyn_headers.current_size > (maxsize2 as usize) && !dyn_headers.table.is_empty() {
             // we check dyn_headers.table as we may be in best effort
             // because the previous maxsize was too big for us to retain all the headers
             dyn_headers.current_size -=
@@ -585,7 +585,7 @@ pub struct HTTP2FrameHeaders {
 //end stream
 pub const HTTP2_FLAG_HEADER_EOS: u8 = 0x1;
 pub const HTTP2_FLAG_HEADER_END_HEADERS: u8 = 0x4;
-const HTTP2_FLAG_HEADER_PADDED: u8 = 0x8;
+pub const HTTP2_FLAG_HEADER_PADDED: u8 = 0x8;
 const HTTP2_FLAG_HEADER_PRIORITY: u8 = 0x20;
 
 fn http2_parse_headers_blocks<'a>(
@@ -593,7 +593,7 @@ fn http2_parse_headers_blocks<'a>(
 ) -> IResult<&'a [u8], Vec<HTTP2FrameHeaderBlock>> {
     let mut blocks = Vec::new();
     let mut i3 = input;
-    while i3.len() > 0 {
+    while !i3.is_empty() {
         match http2_parse_headers_block(i3, dyn_headers) {
             Ok((rem, b)) => {
                 blocks.push(b);
@@ -681,7 +681,7 @@ pub fn http2_parse_frame_continuation<'a>(
 }
 
 #[repr(u16)]
-#[derive(Clone, Copy, PartialEq, FromPrimitive, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, FromPrimitive, Debug)]
 pub enum HTTP2SettingsId {
     SETTINGSHEADERTABLESIZE = 1,
     SETTINGSENABLEPUSH = 2,
@@ -702,7 +702,7 @@ impl std::str::FromStr for HTTP2SettingsId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let su = s.to_uppercase();
-        let su_slice: &str = &*su;
+        let su_slice: &str = &su;
         match su_slice {
             "SETTINGS_HEADER_TABLE_SIZE" => Ok(HTTP2SettingsId::SETTINGSHEADERTABLESIZE),
             "SETTINGS_ENABLE_PUSH" => Ok(HTTP2SettingsId::SETTINGSENABLEPUSH),
@@ -749,7 +749,7 @@ pub fn http2_parse_frame_settings(i: &[u8]) -> IResult<&[u8], Vec<HTTP2FrameSett
 mod tests {
 
     use super::*;
-    use crate::detect::DetectUintMode;
+    use crate::detect::uint::DetectUintMode;
 
     #[test]
     fn test_http2_parse_header() {

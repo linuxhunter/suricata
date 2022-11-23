@@ -25,6 +25,7 @@
  */
 
 #include "suricata-common.h"
+#include "packet.h"
 #include "detect.h"
 #include "flow.h"
 #include "conf.h"
@@ -54,7 +55,6 @@
 #include "app-layer-frames.h"
 #include "util-classification-config.h"
 #include "util-syslog.h"
-#include "util-logopenfile.h"
 #include "log-pcap.h"
 
 #include "output.h"
@@ -86,6 +86,8 @@
 #include "util-optimize.h"
 #include "util-buffer.h"
 #include "util-validate.h"
+
+#include "action-globals.h"
 
 #define MODULE_NAME "JsonAlertLog"
 
@@ -197,13 +199,13 @@ static void AlertJsonDnp3(const Flow *f, const uint64_t tx_id, JsonBuilder *js)
             jb_get_mark(js, &mark);
             bool logged = false;
             jb_open_object(js, "dnp3");
-            if (tx->has_request && tx->request_done) {
+            if (tx->is_request && tx->done) {
                 jb_open_object(js, "request");
                 JsonDNP3LogRequest(js, tx);
                 jb_close(js);
                 logged = true;
             }
-            if (tx->has_response && tx->response_done) {
+            if (!tx->is_request && tx->done) {
                 jb_open_object(js, "response");
                 JsonDNP3LogResponse(js, tx);
                 jb_close(js);
@@ -267,6 +269,25 @@ static void AlertJsonRDP(const Flow *f, const uint64_t tx_id, JsonBuilder *js)
             JsonBuilderMark mark = { 0, 0, 0 };
             jb_get_mark(js, &mark);
             if (!rs_rdp_to_json(tx, js)) {
+                jb_restore_mark(js, &mark);
+            }
+        }
+    }
+}
+
+static void AlertJsonBitTorrentDHT(const Flow *f, const uint64_t tx_id, JsonBuilder *js)
+{
+    void *bittorrent_dht_state = (void *)FlowGetAppState(f);
+    if (bittorrent_dht_state != NULL) {
+        void *tx =
+                AppLayerParserGetTx(f->proto, ALPROTO_BITTORRENT_DHT, bittorrent_dht_state, tx_id);
+        if (tx != NULL) {
+            JsonBuilderMark mark = { 0, 0, 0 };
+            jb_get_mark(js, &mark);
+            jb_open_object(js, "bittorrent_dht");
+            if (rs_bittorrent_dht_logger_log(tx, js)) {
+                jb_close(js);
+            } else {
                 jb_restore_mark(js, &mark);
             }
         }
@@ -348,12 +369,11 @@ void AlertJsonHeader(void *ctx, const Packet *p, const PacketAlert *pa, JsonBuil
     const char *action = "allowed";
     /* use packet action if rate_filter modified the action */
     if (unlikely(pa->flags & PACKET_ALERT_RATE_FILTER_MODIFIED)) {
-        if (PacketTestAction(
-                    p, (ACTION_DROP | ACTION_REJECT | ACTION_REJECT_DST | ACTION_REJECT_BOTH))) {
+        if (PacketCheckAction(p, ACTION_DROP_REJECT)) {
             action = "blocked";
         }
     } else {
-        if (pa->action & (ACTION_REJECT|ACTION_REJECT_DST|ACTION_REJECT_BOTH)) {
+        if (pa->action & ACTION_REJECT_ANY) {
             action = "blocked";
         } else if ((pa->action & ACTION_DROP) && EngineModeIsIPS()) {
             action = "blocked";
@@ -408,17 +428,12 @@ static void AlertJsonTunnel(const Packet *p, JsonBuilder *js)
 
     jb_open_object(js, "tunnel");
 
-    /* get a lock to access root packet fields */
-    SCMutex *m = &p->root->tunnel_mutex;
-
     enum PktSrcEnum pkt_src;
     uint64_t pcap_cnt;
     JsonAddrInfo addr = json_addr_info_zero;
-    SCMutexLock(m);
     JsonAddrInfoInit(p->root, 0, &addr);
     pcap_cnt = p->root->pcap_cnt;
     pkt_src = p->root->pkt_src;
-    SCMutexUnlock(m);
 
     jb_set_string(js, "src_ip", addr.src_ip);
     jb_set_uint(js, "src_port", addr.sp);
@@ -573,6 +588,9 @@ static void AlertAddAppLayer(const Packet *p, JsonBuilder *jb,
                 jb_restore_mark(jb, &mark);
             }
             break;
+        case ALPROTO_BITTORRENT_DHT:
+            AlertJsonBitTorrentDHT(p->flow, tx_id, jb);
+            break;
         default:
             break;
     }
@@ -580,21 +598,26 @@ static void AlertAddAppLayer(const Packet *p, JsonBuilder *jb,
 
 static void AlertAddFiles(const Packet *p, JsonBuilder *jb, const uint64_t tx_id)
 {
-    FileContainer *ffc = AppLayerParserGetFiles(p->flow,
-            p->flowflags & FLOW_PKT_TOSERVER ? STREAM_TOSERVER:STREAM_TOCLIENT);
+    const uint8_t direction =
+            (p->flowflags & FLOW_PKT_TOSERVER) ? STREAM_TOSERVER : STREAM_TOCLIENT;
+    FileContainer *ffc = NULL;
+    if (p->flow->alstate != NULL) {
+        void *tx = AppLayerParserGetTx(p->flow->proto, p->flow->alproto, p->flow->alstate, tx_id);
+        if (tx) {
+            ffc = AppLayerParserGetTxFiles(p->flow, tx, direction);
+        }
+    }
     if (ffc != NULL) {
         File *file = ffc->head;
         bool isopen = false;
         while (file) {
-            if (tx_id == file->txid) {
-                if (!isopen) {
-                    isopen = true;
-                    jb_open_array(jb, "files");
-                }
-                jb_start_object(jb);
-                EveFileInfo(jb, file, file->flags & FILE_STORED);
-                jb_close(jb);
+            if (!isopen) {
+                isopen = true;
+                jb_open_array(jb, "files");
             }
+            jb_start_object(jb);
+            EveFileInfo(jb, file, tx_id, file->flags & FILE_STORED);
+            jb_close(jb);
             file = file->next;
         }
         if (isopen) {
@@ -714,9 +737,31 @@ static int AlertJson(ThreadVars *tv, JsonAlertLogThread *aft, const Packet *p)
             }
 
             EveAddAppProto(p->flow, jb);
+
+            if (p->flowflags & FLOW_PKT_TOSERVER) {
+                jb_set_string(jb, "direction", "to_server");
+            } else {
+                jb_set_string(jb, "direction", "to_client");
+            }
+
             if (json_output_ctx->flags & LOG_JSON_FLOW) {
                 jb_open_object(jb, "flow");
                 EveAddFlow(p->flow, jb);
+                if (p->flowflags & FLOW_PKT_TOCLIENT) {
+                    jb_set_string(jb, "src_ip", addr.dst_ip);
+                    jb_set_string(jb, "dest_ip", addr.src_ip);
+                    if (addr.sp > 0) {
+                        jb_set_uint(jb, "src_port", addr.dp);
+                        jb_set_uint(jb, "dest_port", addr.sp);
+                    }
+                } else {
+                    jb_set_string(jb, "src_ip", addr.src_ip);
+                    jb_set_string(jb, "dest_ip", addr.dst_ip);
+                    if (addr.sp > 0) {
+                        jb_set_uint(jb, "src_port", addr.sp);
+                        jb_set_uint(jb, "dest_port", addr.dp);
+                    }
+                }
                 jb_close(jb);
             }
         }

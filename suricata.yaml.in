@@ -283,6 +283,7 @@ outputs:
         - ike
         - dcerpc
         - krb5
+        - bittorrent-dht
         - snmp
         - rfb
         - sip
@@ -688,6 +689,9 @@ dpdk:
       checksum-checks: true # if Suricata should validate checksums
       checksum-checks-offload: true # if possible offload checksum validation to the NIC (saves Suricata resources)
       mtu: 1500 # Set MTU of the device in bytes
+      # rss-hash-functions: 0x0 # advanced configuration option, use only if you use untested NIC card and experience RSS warnings,
+      # For `rss-hash-functions` use hexadecimal 0x01ab format to specify RSS hash function flags - DumpRssFlags can help (you can see output if you use -vvv option during Suri startup)
+      # setting auto to rss_hf sets the default RSS hash functions (based on IP addresses)
 
       # To approximately calculate required amount of space (in bytes) for interface's mempool: mempool-size * mtu
       # Make sure you have enough allocated hugepages.
@@ -720,6 +724,7 @@ dpdk:
       checksum-checks: true
       checksum-checks-offload: true
       mtu: 1500
+      rss-hash-functions: auto
       mempool-size: 65535
       mempool-cache-size: 257
       rx-descriptors: 1024
@@ -806,6 +811,8 @@ app-layer:
       # Maximum number of live MQTT transactions per flow
       # max-tx: 4096
     krb5:
+      enabled: yes
+    bittorrent-dht:
       enabled: yes
     snmp:
       enabled: yes
@@ -966,7 +973,7 @@ app-layer:
            # auto will use http-body-inline mode in IPS mode, yes or no set it statically
            http-body-inline: auto
 
-           # Decompress SWF files.
+           # Decompress SWF files. Disabled by default.
            # Two types: 'deflate', 'lzma', 'both' will decompress deflate and lzma
            # compress-depth:
            # Specifies the maximum amount of data to decompress,
@@ -975,7 +982,7 @@ app-layer:
            # Specifies the maximum amount of decompressed data to obtain,
            # set 0 for unlimited.
            swf-decompression:
-             enabled: yes
+             enabled: no
              type: both
              compress-depth: 100kb
              decompress-depth: 100kb
@@ -1123,6 +1130,9 @@ asn1-max-frames: 256
 #  group: suri
 
 security:
+  # if true, prevents process creation from Suricata by calling
+  # setrlimit(RLIMIT_NPROC, 0)
+  limit-noproc: true
   # Use landlock security module under Linux
   landlock:
     enabled: no

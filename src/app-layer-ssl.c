@@ -331,6 +331,12 @@ static AppLayerTxData *SSLGetTxData(void *vtx)
     return &ssl_state->tx_data;
 }
 
+static AppLayerStateData *SSLGetStateData(void *vstate)
+{
+    SSLState *ssl_state = (SSLState *)vstate;
+    return &ssl_state->state_data;
+}
+
 void SSLVersionToString(uint16_t version, char *buffer)
 {
     buffer[0] = '\0';
@@ -469,7 +475,7 @@ static inline int TlsDecodeHSCertificateFingerprint(
     if (unlikely(connp->cert0_fingerprint != NULL))
         return 0;
 
-    connp->cert0_fingerprint = SCCalloc(1, SHA1_STRING_LENGTH * sizeof(char));
+    connp->cert0_fingerprint = SCCalloc(1, SHA1_STRING_LENGTH);
     if (connp->cert0_fingerprint == NULL)
         return -1;
 
@@ -1019,7 +1025,7 @@ static inline int TLSDecodeHSHelloExtensionSupportedVersions(SSLState *ssl_state
         /* Use the first (and prefered) valid version as client version,
          * skip over GREASE and other possible noise. */
         uint16_t i = 0;
-        while (i < (uint16_t)supported_ver_len) {
+        while (i + 1 < (uint16_t)supported_ver_len) {
             uint16_t ver = (uint16_t)(input[i] << 8) | input[i + 1];
             if (TLSVersionValid(ver)) {
                 ssl_state->curr_connp->version = ver;
@@ -1506,7 +1512,8 @@ static int SSLv3ParseHandshakeType(SSLState *ssl_state, const uint8_t *input,
         case SSLV3_HS_SERVER_HELLO:
             ssl_state->current_flags = SSL_AL_FLAG_STATE_SERVER_HELLO;
 
-            rc = TLSDecodeHandshakeHello(ssl_state, input, ssl_state->curr_connp->message_length);
+            DEBUG_VALIDATE_BUG_ON(ssl_state->curr_connp->message_length != input_len);
+            rc = TLSDecodeHandshakeHello(ssl_state, input, input_len);
             if (rc < 0)
                 return rc;
             break;
@@ -1604,7 +1611,9 @@ static int SSLv3ParseHandshakeProtocol(SSLState *ssl_state, const uint8_t *input
             ssl_state->curr_connp->hs_buffer_offset += add;
 
             if (ssl_state->curr_connp->hs_buffer_message_size <=
-                    ssl_state->curr_connp->hs_buffer_offset + input_len) {
+                    ssl_state->curr_connp->hs_buffer_offset) {
+                DEBUG_VALIDATE_BUG_ON(ssl_state->curr_connp->hs_buffer_message_size !=
+                                      ssl_state->curr_connp->hs_buffer_offset);
 
                 ssl_state->curr_connp->handshake_type =
                         ssl_state->curr_connp->hs_buffer_message_type;
@@ -2106,7 +2115,7 @@ static struct SSLDecoderResult SSLv2Decode(uint8_t direction, SSLState *ssl_stat
             ssl_state->current_flags = SSL_AL_FLAG_STATE_CLIENT_HELLO;
             ssl_state->current_flags |= SSL_AL_FLAG_SSL_CLIENT_HS;
 
-            const uint16_t version = input[0] << 8 | input[1];
+            const uint16_t version = (uint16_t)(input[0] << 8) | input[1];
             SCLogDebug("SSLv2: version %04x", version);
             ssl_state->curr_connp->version = version;
             uint16_t session_id_length = (input[5]) | (uint16_t)(input[4] << 8);
@@ -3007,6 +3016,7 @@ void RegisterSSLParsers(void)
 
         AppLayerParserRegisterGetTx(IPPROTO_TCP, ALPROTO_TLS, SSLGetTx);
         AppLayerParserRegisterTxDataFunc(IPPROTO_TCP, ALPROTO_TLS, SSLGetTxData);
+        AppLayerParserRegisterStateDataFunc(IPPROTO_TCP, ALPROTO_TLS, SSLGetStateData);
 
         AppLayerParserRegisterGetTxCnt(IPPROTO_TCP, ALPROTO_TLS, SSLGetTxCnt);
 

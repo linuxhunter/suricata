@@ -139,6 +139,9 @@ typedef struct AppLayerParserState_ AppLayerParserState;
 #define FLOWFILE_NO_SIZE_TS             BIT_U16(10)
 #define FLOWFILE_NO_SIZE_TC             BIT_U16(11)
 
+/** store all files in the flow */
+#define FLOWFILE_STORE BIT_U16(12)
+
 #define FLOWFILE_NONE_TS (FLOWFILE_NO_MAGIC_TS | \
                           FLOWFILE_NO_STORE_TS | \
                           FLOWFILE_NO_MD5_TS   | \
@@ -566,6 +569,7 @@ void FlowShutdown(void);
 void FlowSetIPOnlyFlag(Flow *, int);
 void FlowSetHasAlertsFlag(Flow *);
 int FlowHasAlerts(const Flow *);
+bool FlowHasGaps(const Flow *, uint8_t way);
 void FlowSetChangeProtoFlag(Flow *);
 void FlowUnsetChangeProtoFlag(Flow *);
 int FlowChangeProto(Flow *);
@@ -688,9 +692,8 @@ static inline void FlowDeReference(Flow **d)
  */
 static inline int64_t FlowGetId(const Flow *f)
 {
-    int64_t id = (int64_t)f->flow_hash << 31 |
-        (int64_t)(f->startts.tv_sec & 0x0000FFFF) << 16 |
-        (int64_t)(f->startts.tv_usec & 0x0000FFFF);
+    int64_t id = (uint64_t)(f->startts.tv_sec & 0x0000FFFF) << 48 |
+                 (uint64_t)(f->startts.tv_usec & 0x0000FFFF) << 32 | (int64_t)f->flow_hash;
     /* reduce to 51 bits as Javascript and even JSON often seem to
      * max out there. */
     id &= 0x7ffffffffffffLL;

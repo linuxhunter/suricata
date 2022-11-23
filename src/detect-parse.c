@@ -34,6 +34,7 @@
 #include "detect-engine-build.h"
 
 #include "detect-content.h"
+#include "detect-bsize.h"
 #include "detect-pcre.h"
 #include "detect-uricontent.h"
 #include "detect-reference.h"
@@ -68,6 +69,8 @@
 #include "detect-parse.h"
 #include "detect-engine-iponly.h"
 #include "app-layer-detect-proto.h"
+
+#include "action-globals.h"
 
 /* Table with all SigMatch registrations */
 SigTableElmt sigmatch_table[DETECT_TBLSIZE];
@@ -719,7 +722,7 @@ static int SigParseOptions(DetectEngineCtx *de_ctx, Signature *s, char *optstr, 
     s->init_data->negated = false;
 
     if (st->flags & SIGMATCH_INFO_DEPRECATED) {
-#define URL "https://suricata-ids.org/about/deprecation-policy/"
+#define URL "https://suricata.io/our-story/deprecation-policy/"
         if (st->alternative == 0)
             SCLogWarning(SC_WARN_DEPRECATED, "keyword '%s' is deprecated "
                     "and will be removed soon. See %s", st->name, URL);
@@ -1727,6 +1730,10 @@ static int SigValidate(DetectEngineCtx *de_ctx, Signature *s)
             if (!DetectEngineBufferRunValidateCallback(de_ctx, x, s, &de_ctx->sigerror)) {
                 SCReturnInt(0);
             }
+
+            if (!DetectBsizeValidateContentCallback(s, x)) {
+                SCReturnInt(0);
+            }
         }
     }
 
@@ -1912,6 +1919,12 @@ static int SigValidate(DetectEngineCtx *de_ctx, Signature *s)
     }
 #endif
 
+    if (s->init_data->init_flags & SIG_FLAG_INIT_JA3 && s->alproto != ALPROTO_UNKNOWN &&
+            s->alproto != ALPROTO_TLS && s->alproto != ALPROTO_QUIC) {
+        SCLogError(SC_ERR_INVALID_SIGNATURE, "Cannot have ja3 with protocol %s.",
+                AppProtoToString(s->alproto));
+        SCReturnInt(0);
+    }
     if ((s->flags & SIG_FLAG_FILESTORE) || s->file_flags != 0 ||
         (s->init_data->init_flags & SIG_FLAG_INIT_FILEDATA)) {
         if (s->alproto != ALPROTO_UNKNOWN &&
@@ -2608,6 +2621,9 @@ void DetectSetupParseRegexes(const char *parse_str, DetectParseRegex *detect_par
  */
 
 #ifdef UNITTESTS
+#include "detect-engine-alert.h"
+#include "packet.h"
+
 static int SigParseTest01 (void)
 {
     int result = 1;
@@ -3603,7 +3619,7 @@ static int SigTestBidirec03 (void)
 
 end:
     if (p != NULL) {
-        PACKET_RECYCLE(p);
+        PacketRecycle(p);
         SCFree(p);
     }
     FlowShutdown();
@@ -3741,7 +3757,7 @@ static int SigTestBidirec04 (void)
     }
 
     if (p != NULL) {
-        PACKET_RECYCLE(p);
+        PacketRecycle(p);
     }
     FlowShutdown();
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);

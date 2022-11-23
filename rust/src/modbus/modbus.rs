@@ -90,6 +90,7 @@ impl ModbusTransaction {
 }
 
 pub struct ModbusState {
+    state_data: AppLayerStateData,
     pub transactions: Vec<ModbusTransaction>,
     tx_id: u64,
     givenup: bool, // Indicates flood
@@ -108,6 +109,7 @@ impl State<ModbusTransaction> for ModbusState {
 impl ModbusState {
     pub fn new() -> Self {
         Self {
+            state_data: AppLayerStateData::new(),
             transactions: Vec::new(),
             tx_id: 0,
             givenup: false,
@@ -183,7 +185,7 @@ impl ModbusState {
 
     pub fn parse(&mut self, input: &[u8], direction: Direction) -> AppLayerResult {
         let mut rest = input;
-        while rest.len() > 0 {
+        while !rest.is_empty() {
             match MODBUS_PARSER.parse(rest, direction.clone()) {
                 Ok((inner_rest, Some(mut msg))) => {
                     match direction {
@@ -314,7 +316,7 @@ pub unsafe extern "C" fn rs_modbus_parse_request(
     _data: *const std::os::raw::c_void,
 ) -> AppLayerResult {
     let buf = stream_slice.as_slice();
-    if buf.len() == 0 {
+    if buf.is_empty() {
         if AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TS) > 0 {
             return AppLayerResult::ok();
         } else {
@@ -333,7 +335,7 @@ pub unsafe extern "C" fn rs_modbus_parse_response(
     _data: *const std::os::raw::c_void,
 ) -> AppLayerResult {
     let buf = stream_slice.as_slice();
-    if buf.len() == 0 {
+    if buf.is_empty() {
         if AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TC) > 0 {
             return AppLayerResult::ok();
         } else {
@@ -378,6 +380,8 @@ pub unsafe extern "C" fn rs_modbus_state_get_tx_data(
     &mut tx.tx_data
 }
 
+export_state_data_get!(rs_modbus_get_state_data, ModbusState);
+
 #[no_mangle]
 pub unsafe extern "C" fn rs_modbus_register_parser() {
     let default_port = std::ffi::CString::new("[502]").unwrap();
@@ -403,9 +407,10 @@ pub unsafe extern "C" fn rs_modbus_register_parser() {
         get_eventinfo_byid: Some(ModbusEvent::get_event_info_by_id),
         localstorage_new: None,
         localstorage_free: None,
-        get_files: None,
+        get_tx_files: None,
         get_tx_iterator: Some(applayer::state_get_tx_iterator::<ModbusState, ModbusTransaction>),
         get_tx_data: rs_modbus_state_get_tx_data,
+        get_state_data: rs_modbus_get_state_data,
         apply_tx_config: None,
         flags: 0,
         truncate: None,

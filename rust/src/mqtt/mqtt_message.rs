@@ -52,7 +52,7 @@ pub enum MQTTOperation {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, PartialOrd, FromPrimitive, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, FromPrimitive, Debug)]
 pub enum MQTTTypeCode {
     UNASSIGNED = 0,
     CONNECT = 1,
@@ -88,7 +88,7 @@ impl std::str::FromStr for MQTTTypeCode {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let su = s.to_uppercase();
-        let su_slice: &str = &*su;
+        let su_slice: &str = &su;
         match su_slice {
             "CONNECT" => Ok(MQTTTypeCode::CONNECT),
             "CONNACK" => Ok(MQTTTypeCode::CONNACK),

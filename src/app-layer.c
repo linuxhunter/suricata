@@ -25,7 +25,7 @@
  */
 
 #include "suricata-common.h"
-
+#include "suricata.h"
 #include "app-layer.h"
 #include "app-layer-parser.h"
 #include "app-layer-protos.h"
@@ -507,6 +507,7 @@ static int TCPProtoDetect(ThreadVars *tv,
         int r = AppLayerParserParse(tv, app_tctx->alp_tctx, f, f->alproto,
                 flags, data, data_len);
         PACKET_PROFILING_APP_END(app_tctx, f->alproto);
+        p->flags |= PKT_APPLAYER_UPDATE;
         if (r != 1) {
             StreamTcpUpdateAppLayerProgress(ssn, direction, data_len);
         }
@@ -580,6 +581,7 @@ static int TCPProtoDetect(ThreadVars *tv,
                             f->alproto, flags,
                             data, data_len);
                     PACKET_PROFILING_APP_END(app_tctx, f->alproto);
+                    p->flags |= PKT_APPLAYER_UPDATE;
                     if (r != 1) {
                         StreamTcpUpdateAppLayerProgress(ssn, direction, data_len);
                     }
@@ -684,6 +686,7 @@ int AppLayerHandleTCPData(ThreadVars *tv, TcpReassemblyThreadCtx *ra_ctx,
         r = AppLayerParserParse(tv, app_tctx->alp_tctx, f, f->alproto,
                 flags, data, data_len);
         PACKET_PROFILING_APP_END(app_tctx, f->alproto);
+        p->flags |= PKT_APPLAYER_UPDATE;
         /* ignore parser result for gap */
         StreamTcpUpdateAppLayerProgress(ssn, direction, data_len);
         if (r < 0) {
@@ -767,6 +770,7 @@ int AppLayerHandleTCPData(ThreadVars *tv, TcpReassemblyThreadCtx *ra_ctx,
             r = AppLayerParserParse(tv, app_tctx->alp_tctx, f, f->alproto,
                                     flags, data, data_len);
             PACKET_PROFILING_APP_END(app_tctx, f->alproto);
+            p->flags |= PKT_APPLAYER_UPDATE;
             if (r != 1) {
                 StreamTcpUpdateAppLayerProgress(ssn, direction, data_len);
                 if (r < 0) {
@@ -891,6 +895,7 @@ int AppLayerHandleUdp(ThreadVars *tv, AppLayerThreadCtx *tctx, Packet *p, Flow *
             r = AppLayerParserParse(tv, tctx->alp_tctx, f, f->alproto,
                                     flags, p->payload, p->payload_len);
             PACKET_PROFILING_APP_END(tctx, f->alproto);
+            p->flags |= PKT_APPLAYER_UPDATE;
         }
         PACKET_PROFILING_APP_STORE(tctx, p);
         /* we do only inspection in one direction, so flag both
@@ -907,6 +912,7 @@ int AppLayerHandleUdp(ThreadVars *tv, AppLayerThreadCtx *tctx, Packet *p, Flow *
                 flags, p->payload, p->payload_len);
         PACKET_PROFILING_APP_END(tctx, f->alproto);
         PACKET_PROFILING_APP_STORE(tctx, p);
+        p->flags |= PKT_APPLAYER_UPDATE;
     }
     if (r < 0) {
         ExceptionPolicyApply(p, g_applayerparser_error_policy, PKT_DROP_REASON_APPLAYER_ERROR);
@@ -1172,7 +1178,6 @@ void AppLayerDeSetupCounters()
 
 #ifdef UNITTESTS
 #include "pkt-var.h"
-#include "stream-tcp.h"
 #include "stream-tcp-util.h"
 #include "stream.h"
 #include "util-unittest.h"
@@ -1186,7 +1191,6 @@ void AppLayerDeSetupCounters()
     TCPHdr tcph;                                                                                   \
     PacketQueueNoLock pq;                                                                          \
     memset(&pq, 0, sizeof(PacketQueueNoLock));                                                     \
-    memset(p, 0, SIZE_OF_PACKET);                                                                  \
     memset(&f, 0, sizeof(Flow));                                                                   \
     memset(&tv, 0, sizeof(ThreadVars));                                                            \
     memset(&tcph, 0, sizeof(TCPHdr));                                                              \

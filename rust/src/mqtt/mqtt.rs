@@ -97,6 +97,7 @@ impl Transaction for MQTTTransaction {
 }
 
 pub struct MQTTState {
+    state_data: AppLayerStateData,
     tx_id: u64,
     pub protocol_version: u8,
     transactions: VecDeque<MQTTTransaction>,
@@ -120,6 +121,7 @@ impl State<MQTTTransaction> for MQTTState {
 impl MQTTState {
     pub fn new() -> Self {
         Self {
+            state_data: AppLayerStateData::new(),
             tx_id: 0,
             protocol_version: 0,
             transactions: VecDeque::new(),
@@ -183,7 +185,7 @@ impl MQTTState {
         if self.transactions.len() > unsafe { MQTT_MAX_TX } {
             let mut index = self.tx_index_completed;
             for tx_old in &mut self.transactions.range_mut(self.tx_index_completed..) {
-                index = index + 1;
+                index += 1;
                 if !tx_old.complete {
                     tx_old.complete = true;
                     MQTTState::set_event(tx_old, MQTTEvent::TooManyTransactions);
@@ -307,9 +309,9 @@ impl MQTTState {
             }
             MQTTOperation::CONNACK(ref _connack) => {
                 if let Some(tx) = self.get_tx_by_pkt_id(MQTT_CONNECT_PKT_ID) {
-                    (*tx).msg.push(msg);
-                    (*tx).complete = true;
-                    (*tx).pkt_id = None;
+                    tx.msg.push(msg);
+                    tx.complete = true;
+                    tx.pkt_id = None;
                     self.connected = true;
                 } else {
                     let mut tx = self.new_tx(msg, toclient);
@@ -325,7 +327,7 @@ impl MQTTState {
                     return;
                 }
                 if let Some(tx) = self.get_tx_by_pkt_id(v.message_id as u32) {
-                    (*tx).msg.push(msg);
+                    tx.msg.push(msg);
                 } else {
                     let mut tx = self.new_tx(msg, toclient);
                     MQTTState::set_event(&mut tx, MQTTEvent::MissingPublish);
@@ -340,9 +342,9 @@ impl MQTTState {
                     return;
                 }
                 if let Some(tx) = self.get_tx_by_pkt_id(v.message_id as u32) {
-                    (*tx).msg.push(msg);
-                    (*tx).complete = true;
-                    (*tx).pkt_id = None;
+                    tx.msg.push(msg);
+                    tx.complete = true;
+                    tx.pkt_id = None;
                 } else {
                     let mut tx = self.new_tx(msg, toclient);
                     MQTTState::set_event(&mut tx, MQTTEvent::MissingPublish);
@@ -357,9 +359,9 @@ impl MQTTState {
                     return;
                 }
                 if let Some(tx) = self.get_tx_by_pkt_id(suback.message_id as u32) {
-                    (*tx).msg.push(msg);
-                    (*tx).complete = true;
-                    (*tx).pkt_id = None;
+                    tx.msg.push(msg);
+                    tx.complete = true;
+                    tx.pkt_id = None;
                 } else {
                     let mut tx = self.new_tx(msg, toclient);
                     MQTTState::set_event(&mut tx, MQTTEvent::MissingSubscribe);
@@ -374,9 +376,9 @@ impl MQTTState {
                     return;
                 }
                 if let Some(tx) = self.get_tx_by_pkt_id(unsuback.message_id as u32) {
-                    (*tx).msg.push(msg);
-                    (*tx).complete = true;
-                    (*tx).pkt_id = None;
+                    tx.msg.push(msg);
+                    tx.complete = true;
+                    tx.pkt_id = None;
                 } else {
                     let mut tx = self.new_tx(msg, toclient);
                     MQTTState::set_event(&mut tx, MQTTEvent::MissingUnsubscribe);
@@ -421,7 +423,7 @@ impl MQTTState {
 
     fn parse_request(&mut self, input: &[u8]) -> AppLayerResult {
         let mut current = input;
-        if input.len() == 0 {
+        if input.is_empty() {
             return AppLayerResult::ok();
         }
 
@@ -448,7 +450,7 @@ impl MQTTState {
             }
         }
 
-        while current.len() > 0 {
+        while !current.is_empty() {
             SCLogDebug!("request: handling {}", current.len());
             match parse_message(current, self.protocol_version, self.max_msg_len) {
                 Ok((rem, msg)) => {
@@ -496,7 +498,7 @@ impl MQTTState {
 
     fn parse_response(&mut self, input: &[u8]) -> AppLayerResult {
         let mut current = input;
-        if input.len() == 0 {
+        if input.is_empty() {
             return AppLayerResult::ok();
         }
 
@@ -522,9 +524,9 @@ impl MQTTState {
             }
         }
 
-        while current.len() > 0 {
+        while !current.is_empty() {
             SCLogDebug!("response: handling {}", current.len());
-            match parse_message(current, self.protocol_version, self.max_msg_len as usize) {
+            match parse_message(current, self.protocol_version, self.max_msg_len) {
                 Ok((rem, msg)) => {
                     SCLogDebug!("response msg {:?}", msg);
                     if let MQTTOperation::TRUNCATED(ref trunc) = msg.op {
@@ -719,9 +721,10 @@ pub unsafe extern "C" fn rs_mqtt_tx_set_logged(
 }
 
 // Parser name as a C style string.
-const PARSER_NAME: &'static [u8] = b"mqtt\0";
+const PARSER_NAME: &[u8] = b"mqtt\0";
 
 export_tx_data_get!(rs_mqtt_get_tx_data, MQTTTransaction);
+export_state_data_get!(rs_mqtt_get_state_data, MQTTState);
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_mqtt_register_parser(cfg_max_msg_len: u32) {
@@ -750,9 +753,10 @@ pub unsafe extern "C" fn rs_mqtt_register_parser(cfg_max_msg_len: u32) {
         get_eventinfo_byid: Some(MQTTEvent::get_event_info_by_id),
         localstorage_new: None,
         localstorage_free: None,
-        get_files: None,
+        get_tx_files: None,
         get_tx_iterator: Some(crate::applayer::state_get_tx_iterator::<MQTTState, MQTTTransaction>),
         get_tx_data: rs_mqtt_get_tx_data,
+        get_state_data: rs_mqtt_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_UNIDIR_TXS,
         truncate: None,

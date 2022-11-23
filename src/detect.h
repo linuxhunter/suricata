@@ -25,8 +25,8 @@
 #define __DETECT_H__
 
 #include "suricata-common.h"
-
 #include "flow.h"
+#include "app-layer-events.h"
 
 #include "detect-engine-proto.h"
 #include "detect-reference.h"
@@ -41,8 +41,6 @@
 #include "util-radix-tree.h"
 #include "util-file.h"
 #include "reputation.h"
-
-#include "app-layer-events.h"
 
 #define DETECT_MAX_RULE_SIZE 8192
 
@@ -257,6 +255,7 @@ typedef struct DetectPort_ {
 #define SIG_FLAG_INIT_NEED_FLUSH            BIT_U32(7)
 #define SIG_FLAG_INIT_PRIO_EXPLICT          BIT_U32(8)  /**< priority is explicitly set by the priority keyword */
 #define SIG_FLAG_INIT_FILEDATA              BIT_U32(9)  /**< signature has filedata keyword */
+#define SIG_FLAG_INIT_JA3                   BIT_U32(10) /**< signature has ja3 keyword */
 
 /* signature mask flags */
 /** \note: additions should be added to the rule analyzer as well */
@@ -996,15 +995,6 @@ enum {
 #define ENGINE_SGH_MPM_FACTORY_CONTEXT_START_ID_RANGE (ENGINE_SGH_MPM_FACTORY_CONTEXT_AUTO + 1)
 };
 
-typedef struct HttpReassembledBody_ {
-    const uint8_t *buffer;
-    uint8_t *decompressed_buffer;
-    uint32_t buffer_size;   /**< size of the buffer itself */
-    uint32_t buffer_len;    /**< data len in the buffer */
-    uint32_t decompressed_buffer_len;
-    uint64_t offset;        /**< data offset */
-} HttpReassembledBody;
-
 #define DETECT_FILESTORE_MAX 15
 
 typedef struct SignatureNonPrefilterStore_ {
@@ -1308,6 +1298,10 @@ typedef struct MpmStore_ {
 typedef void (*PrefilterFrameFn)(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p,
         const struct Frames *frames, const struct Frame *frame, const uint32_t idx);
 
+typedef struct AppLayerTxData AppLayerTxData;
+typedef void (*PrefilterTxFn)(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p, Flow *f,
+        void *tx, const uint64_t tx_id, const AppLayerTxData *tx_data, const uint8_t flags);
+
 typedef struct PrefilterEngineList_ {
     uint16_t id;
 
@@ -1324,9 +1318,7 @@ typedef struct PrefilterEngineList_ {
     void *pectx;
 
     void (*Prefilter)(DetectEngineThreadCtx *det_ctx, Packet *p, const void *pectx);
-    void (*PrefilterTx)(DetectEngineThreadCtx *det_ctx, const void *pectx,
-            Packet *p, Flow *f, void *tx,
-            const uint64_t idx, const uint8_t flags);
+    PrefilterTxFn PrefilterTx;
     PrefilterFrameFn PrefilterFrame;
 
     struct PrefilterEngineList_ *next;
@@ -1358,9 +1350,7 @@ typedef struct PrefilterEngine_ {
 
     union {
         void (*Prefilter)(DetectEngineThreadCtx *det_ctx, Packet *p, const void *pectx);
-        void (*PrefilterTx)(DetectEngineThreadCtx *det_ctx, const void *pectx,
-                Packet *p, Flow *f, void *tx,
-                const uint64_t idx, const uint8_t flags);
+        PrefilterTxFn PrefilterTx;
         PrefilterFrameFn PrefilterFrame;
     } cb;
 

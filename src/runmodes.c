@@ -629,7 +629,7 @@ static void SetupOutput(const char *name, OutputModule *module, OutputCtx *outpu
                 module->ThreadExitPrintStats);
         /* Not used with wild card loggers */
         if (module->alproto != ALPROTO_UNKNOWN) {
-            logger_bits[module->alproto] |= (1<<module->logger_id);
+            logger_bits[module->alproto] |= BIT_U32(module->logger_id);
         }
     } else if (module->FiledataLogFunc) {
         SCLogDebug("%s is a filedata logger", module->name);
@@ -757,6 +757,9 @@ static void RunModeInitializeLuaOutput(ConfNode *conf, OutputCtx *parent_ctx)
     }
 }
 
+extern bool g_file_logger_enabled;
+extern bool g_filedata_logger_enabled;
+
 /**
  * Initialize the output modules.
  */
@@ -794,18 +797,16 @@ void RunModeInitializeOutputs(void)
         }
 
         if (strcmp(output->val, "file-log") == 0) {
-            SCLogWarning(SC_ERR_NOT_SUPPORTED,
-                    "file-log is no longer supported,"
-                    " use eve.files instead "
-                    "(see https://redmine.openinfosecfoundation.org/issues/2376"
-                    " for an explanation)");
+            SCLogWarning(SC_ERR_NOT_SUPPORTED, "file-log is no longer supported,"
+                                               " use eve.files instead "
+                                               "(see ticket #2376"
+                                               " for an explanation)");
             continue;
         } else if (strncmp(output->val, "unified-", sizeof("unified-") - 1) == 0) {
-            SCLogWarning(SC_ERR_NOT_SUPPORTED,
-                    "Unified1 is no longer supported,"
-                    " use Unified2 instead "
-                    "(see https://redmine.openinfosecfoundation.org/issues/353"
-                    " for an explanation)");
+            SCLogWarning(SC_ERR_NOT_SUPPORTED, "Unified1 is no longer supported,"
+                                               " use Unified2 instead "
+                                               "(see ticket #353"
+                                               " for an explanation)");
             continue;
         } else if (strncmp(output->val, "unified2-", sizeof("unified2-") - 1) == 0) {
             SCLogWarning(SC_ERR_NOT_SUPPORTED,
@@ -919,11 +920,31 @@ void RunModeInitializeOutputs(void)
     /* register the logger bits to the app-layer */
     AppProto a;
     for (a = 0; a < ALPROTO_MAX; a++) {
+        if (AppLayerParserSupportsFiles(IPPROTO_TCP, a)) {
+            if (g_file_logger_enabled)
+                logger_bits[a] |= BIT_U32(LOGGER_FILE);
+            if (g_filedata_logger_enabled)
+                logger_bits[a] |= BIT_U32(LOGGER_FILEDATA);
+            SCLogDebug("IPPROTO_TCP::%s: g_file_logger_enabled %d g_filedata_logger_enabled %d -> "
+                       "%08x",
+                    AppProtoToString(a), g_file_logger_enabled, g_filedata_logger_enabled,
+                    logger_bits[a]);
+        }
+        if (AppLayerParserSupportsFiles(IPPROTO_UDP, a)) {
+            if (g_file_logger_enabled)
+                logger_bits[a] |= BIT_U32(LOGGER_FILE);
+            if (g_filedata_logger_enabled)
+                logger_bits[a] |= BIT_U32(LOGGER_FILEDATA);
+        }
+
         if (logger_bits[a] == 0)
             continue;
 
-        const int tcp = AppLayerParserProtocolHasLogger(IPPROTO_TCP, a);
-        const int udp = AppLayerParserProtocolHasLogger(IPPROTO_UDP, a);
+        const int tcp = AppLayerParserProtocolHasLogger(IPPROTO_TCP, a) | (g_file_logger_enabled) |
+                        (g_filedata_logger_enabled);
+        const int udp = AppLayerParserProtocolHasLogger(IPPROTO_UDP, a) | (g_file_logger_enabled) |
+                        (g_filedata_logger_enabled);
+        SCLogDebug("tcp %d udp %d", tcp, udp);
 
         SCLogDebug("logger for %s: %s %s", AppProtoToString(a),
                 tcp ? "true" : "false", udp ? "true" : "false");

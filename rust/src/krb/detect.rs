@@ -97,7 +97,11 @@ impl DetectKrb5TicketEncryptionList {
     }
 }
 
+
+// Suppress large enum variant lint as the LIST is very large compared
+// to the boolean variant.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum DetectKrb5TicketEncryptionData {
     WEAK(bool),
     LIST(DetectKrb5TicketEncryptionList),
@@ -121,7 +125,7 @@ trait MyFromStr {
 
 impl MyFromStr for EncryptionType {
     fn from_str(s: &str) -> Result<Self, String> {
-        let su_slice: &str = &*s;
+        let su_slice: &str = s;
         match su_slice {
             "des-cbc-crc" => Ok(EncryptionType::DES_CBC_CRC),
             "des-cbc-md4" => Ok(EncryptionType::DES_CBC_MD4),

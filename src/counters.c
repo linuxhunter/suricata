@@ -25,23 +25,21 @@
  */
 
 #include "suricata-common.h"
-#include "suricata.h"
 #include "counters.h"
+
+#include "suricata.h"
 #include "threadvars.h"
-#include "tm-threads.h"
-#include "conf.h"
-#include "util-time.h"
-#include "util-unittest.h"
-#include "util-debug.h"
-#include "util-byte.h"
-#include "util-privs.h"
-#include "util-signal.h"
-#include "unix-manager.h"
-#include "runmodes.h"
 
 #include "output.h"
-#include "output-stats.h"
 #include "output-json-stats.h"
+
+#include "util-byte.h"
+#include "util-conf.h"
+#include "util-hash.h"
+#include "util-time.h"
+
+#include "tm-threads.h"
+#include "util-privs.h"
 
 /* Time interval for syncing the local counters with the global ones */
 #define STATS_WUT_TTS 3
@@ -413,7 +411,7 @@ static void *StatsMgmtThread(void *arg)
     }
     SCLogDebug("stats_thread_data %p", &stats_thread_data);
 
-    TmThreadsSetFlag(tv_local, THV_INIT_DONE);
+    TmThreadsSetFlag(tv_local, THV_INIT_DONE | THV_RUNNING);
     while (1) {
         if (TmThreadsCheckFlag(tv_local, THV_PAUSE)) {
             TmThreadsSetFlag(tv_local, THV_PAUSED);
@@ -482,7 +480,8 @@ static void *StatsWakeupThread(void *arg)
         return NULL;
     }
 
-    TmThreadsSetFlag(tv_local, THV_INIT_DONE);
+    TmThreadsSetFlag(tv_local, THV_INIT_DONE | THV_RUNNING);
+
     while (1) {
         if (TmThreadsCheckFlag(tv_local, THV_PAUSE)) {
             TmThreadsSetFlag(tv_local, THV_PAUSED);

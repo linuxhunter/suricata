@@ -20,7 +20,7 @@ use crate::core::*;
 use crate::smb::smb::*;
 use crate::dcerpc::detect::{DCEIfaceData, DCEOpnumData, DETECT_DCE_OPNUM_RANGE_UNINITIALIZED};
 use crate::dcerpc::dcerpc::DCERPC_TYPE_REQUEST;
-use crate::detect::detect_match_uint;
+use crate::detect::uint::detect_match_uint;
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_smb_tx_get_share(tx: &mut SMBTransaction,
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn rs_smb_tx_get_stub_data(tx: &mut SMBTransaction,
             } else {
                 &x.stub_data_tc
             };
-            if vref.len() > 0 {
+            if !vref.is_empty() {
                 *buffer = vref.as_ptr();
                 *buffer_len = vref.len() as u32;
                 return 1;
@@ -160,7 +160,7 @@ pub extern "C" fn rs_smb_tx_get_dce_iface(state: &mut SMBState,
 
         if i.acked && i.ack_result == 0 && i.uuid == if_uuid {
             if let Some(x) = &dce_data.du16 {
-                if detect_match_uint(&x, i.ver) {
+                if detect_match_uint(x, i.ver) {
                     return 1;
                 }
             } else {
@@ -168,5 +168,51 @@ pub extern "C" fn rs_smb_tx_get_dce_iface(state: &mut SMBState,
             }
         }
     }
+    return 0;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rs_smb_tx_get_ntlmssp_user(tx: &mut SMBTransaction,
+                                            buffer: *mut *const u8,
+                                            buffer_len: *mut u32)
+                                            -> u8
+{
+    match tx.type_data {
+        Some(SMBTransactionTypeData::SESSIONSETUP(ref x)) => {
+            if let Some(ref ntlmssp) = x.ntlmssp {
+                *buffer = ntlmssp.user.as_ptr();
+                *buffer_len = ntlmssp.user.len() as u32;
+                return 1;
+            }
+        }
+        _ => {
+        }
+    }
+
+    *buffer = ptr::null();
+    *buffer_len = 0;
+    return 0;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rs_smb_tx_get_ntlmssp_domain(tx: &mut SMBTransaction,
+                                            buffer: *mut *const u8,
+                                            buffer_len: *mut u32)
+                                            -> u8
+{
+    match tx.type_data {
+        Some(SMBTransactionTypeData::SESSIONSETUP(ref x)) => {
+            if let Some(ref ntlmssp) = x.ntlmssp {
+                *buffer = ntlmssp.domain.as_ptr();
+                *buffer_len = ntlmssp.domain.len() as u32;
+                return 1;
+            }
+        }
+        _ => {
+        }
+    }
+
+    *buffer = ptr::null();
+    *buffer_len = 0;
     return 0;
 }

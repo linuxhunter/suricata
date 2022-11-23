@@ -753,6 +753,8 @@ After 'mpm-algo', you can enter one of the following algorithms: ac, hs and ac-k
 
 On `x86_64` hs (Hyperscan) should be used for best performance.
 
+.. _suricata-yaml-threading:
+
 Threading
 ---------
 
@@ -993,7 +995,7 @@ and prealloc for the following:
 
 The flow-engine has a management thread that operates independent from
 the packet processing. This thread is called the flow-manager. This
-thread ensures that wherever possible and within the memcap. there
+thread ensures that wherever possible and within the memcap. There
 will be 10000 flows prepared.
 
 In IPS mode, a memcap-policy exception policy can be set, telling Suricata
@@ -1251,13 +1253,13 @@ Application Layer Parsers
 
 The ``app-layer`` section holds application layer specific configurations.
 
-A in IPS mode, a global exception policy accessed via the ``error-policy``
+In IPS mode, a global exception policy accessed via the ``error-policy``
 setting can be defined to indicate what the engine should do in case if
 encounters an app-layer error. Possible values are "drop-flow", "pass-flow",
-"bypass", "drop-packet", "pass-packet", "reject" or "ignore" (which will mean
-keeping the default behavior).
+"bypass", "drop-packet", "pass-packet", "reject" or "ignore" (which maintains
+the default behavior).
 
-Each supported protocol will have a dedicated subsection under ``protocols``.
+Each supported protocol has a dedicated subsection under ``protocols``.
 
 Asn1_max_frames (new in 1.0.3 and 1.1)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1684,15 +1686,14 @@ unlimited.
 MQTT
 ~~~~
 
-MQTT messages could theoretically be up to 256MB in size, potentially
-containing a lot of payload data (such as properties, topics, or
-published payloads) that would end up parsed and logged. To acknowledge
-the fact that most MQTT messages, however, will be quite small and to
-reduce the potential for denial of service issues, it is possible to limit
-the maximum length of a message that we are willing to parse. Any message
-larger than the limit will just be logged with reduced metadata, and rules
-will only be evaluated against a subset of fields.
-The default is 1 MB.
+The maximum size of a MQTT message is 256MB, potentially containing a lot of
+payload data (such as properties, topics, or published payloads) that would end
+up parsed and logged. To acknowledge the fact that most MQTT messages, however,
+will be quite small and to reduce the potential for denial of service issues,
+it is possible to limit the maximum length of a message that Suricata should
+parse. Any message larger than the limit will just be logged with reduced
+metadata, and rules will only be evaluated against a subset of fields. The
+default is 1 MB.
 
 ::
 
@@ -1905,6 +1906,8 @@ computers etc.)
 
 Packet Acquisition
 ------------------
+
+.. _dpdk-capture-module:
 
 Data Plane Development Kit (DPDK)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2610,3 +2613,25 @@ detect thread. For each output script, a single state is used. Keep in
 mind that a rule reload temporary doubles the states requirement.
 
 .. _deprecation policy: https://suricata.io/about/deprecation-policy/
+
+.. _suricata-yaml-config-hardening:
+
+Configuration hardening
+-----------------------
+
+The `security` section of suricata.yaml is meant to provide in-depth security configuration options.
+
+Besides landlock, (see :ref:`landlock`), one setting is available.
+`limit-noproc` is a boolean to prevent process creation by Suricata.
+If you do not need Suricata to create other processes or threads
+(you may need it for LUA scripts for instance or plugins), enable this to
+call `setrlimit` with `RLIMIT_NPROC` argument (see `man setrlimit`).
+This prevents potential exploits against Suricata to fork a new process,
+even if it does not prevent the call of `exec`.
+
+Warning! This has no effect on Linux when running as root. If you want a hardened configuration,
+you probably want to set `run-as` configuration parameter so as to drop root privileges.
+
+Beyond suricata.yaml, other ways to harden Suricata are
+- compilation : enabling ASLR and other exploit mitigation techniques.
+- environment : running Suricata on a device that has no direct access to Internet.

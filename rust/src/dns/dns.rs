@@ -15,8 +15,6 @@
  * 02110-1301, USA.
  */
 
-extern crate nom;
-
 use std;
 use std::ffi::CString;
 use std::collections::HashMap;
@@ -83,6 +81,7 @@ pub const DNS_RECORD_TYPE_TLSA        : u16 = 52;
 pub const DNS_RECORD_TYPE_HIP         : u16 = 55;
 pub const DNS_RECORD_TYPE_CDS         : u16 = 59;
 pub const DNS_RECORD_TYPE_CDNSKEY     : u16 = 60;
+pub const DNS_RECORD_TYPE_HTTPS       : u16 = 65;
 pub const DNS_RECORD_TYPE_SPF         : u16 = 99;  // Obsolete
 pub const DNS_RECORD_TYPE_TKEY        : u16 = 249;
 pub const DNS_RECORD_TYPE_TSIG        : u16 = 250;
@@ -125,7 +124,7 @@ pub enum DnsFrameType {
 }
 
 
-#[derive(Debug, PartialEq, AppLayerEvent)]
+#[derive(Debug, PartialEq, Eq, AppLayerEvent)]
 pub enum DNSEvent {
     MalformedData,
     NotRequest,
@@ -133,7 +132,7 @@ pub enum DNSEvent {
     ZFlagSet,
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq, Eq)]
 #[repr(C)]
 pub struct DNSHeader {
     pub tx_id: u16,
@@ -151,7 +150,7 @@ pub struct DNSQueryEntry {
     pub rrclass: u16,
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq, Eq)]
 pub struct DNSRDataSOA {
     /// Primary name server for this zone
     pub mname: Vec<u8>,
@@ -169,7 +168,7 @@ pub struct DNSRDataSOA {
     pub minimum: u32,
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq, Eq)]
 pub struct DNSRDataSSHFP {
     /// Algorithm number
     pub algo: u8,
@@ -179,7 +178,7 @@ pub struct DNSRDataSSHFP {
     pub fingerprint: Vec<u8>,
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq, Eq)]
 pub struct DNSRDataSRV {
     /// Priority
     pub priority: u16,
@@ -192,7 +191,7 @@ pub struct DNSRDataSRV {
 }
 
 /// Represents RData of various formats
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq, Eq)]
 pub enum DNSRData {
     // RData is an address
     A(Vec<u8>),
@@ -213,7 +212,7 @@ pub enum DNSRData {
     Unknown(Vec<u8>),
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug,PartialEq, Eq)]
 pub struct DNSAnswerEntry {
     pub name: Vec<u8>,
     pub rrtype: u16,
@@ -317,6 +316,8 @@ impl ConfigTracker {
 
 #[derive(Default)]
 pub struct DNSState {
+    state_data: AppLayerStateData,
+
     // Internal transaction ID.
     pub tx_id: u64,
 
@@ -505,9 +506,9 @@ impl DNSState {
 
         let mut cur_i = input;
         let mut consumed = 0;
-        while cur_i.len() > 0 {
+        while !cur_i.is_empty() {
             if cur_i.len() == 1 {
-                return AppLayerResult::incomplete(consumed as u32, 2 as u32);
+                return AppLayerResult::incomplete(consumed as u32, 2_u32);
             }
             let size = match be_u16(cur_i) as IResult<&[u8],u16> {
                 Ok((_, len)) => len,
@@ -554,9 +555,9 @@ impl DNSState {
 
         let mut cur_i = input;
         let mut consumed = 0;
-        while cur_i.len() > 0 {
+        while !cur_i.is_empty() {
             if cur_i.len() == 1 {
-                return AppLayerResult::incomplete(consumed as u32, 2 as u32);
+                return AppLayerResult::incomplete(consumed as u32, 2_u32);
             }
             let size = match be_u16(cur_i) as IResult<&[u8],u16> {
                 Ok((_, len)) => len,
@@ -826,6 +827,8 @@ pub unsafe extern "C" fn rs_dns_state_get_tx_data(
     return &mut tx.tx_data;
 }
 
+export_state_data_get!(rs_dns_get_state_data, DNSState);
+
 #[no_mangle]
 pub unsafe extern "C" fn rs_dns_tx_get_query_name(tx: &mut DNSTransaction,
                                        i: u32,
@@ -836,7 +839,7 @@ pub unsafe extern "C" fn rs_dns_tx_get_query_name(tx: &mut DNSTransaction,
     if let &Some(ref request) = &tx.request {
         if (i as usize) < request.queries.len() {
             let query = &request.queries[i as usize];
-            if query.name.len() > 0 {
+            if !query.name.is_empty() {
                 *len = query.name.len() as u32;
                 *buf = query.name.as_ptr();
                 return 1;
@@ -874,7 +877,7 @@ pub unsafe extern "C" fn rs_dns_tx_get_query_rrtype(tx: &mut DNSTransaction,
     if let &Some(ref request) = &tx.request {
         if (i as usize) < request.queries.len() {
             let query = &request.queries[i as usize];
-            if query.name.len() > 0 {
+            if !query.name.is_empty() {
                 *rrtype = query.rrtype;
                 return 1;
             }
@@ -978,9 +981,10 @@ pub unsafe extern "C" fn rs_dns_udp_register_parser() {
         get_eventinfo_byid: Some(DNSEvent::get_event_info_by_id),
         localstorage_new: None,
         localstorage_free: None,
-        get_files: None,
+        get_tx_files: None,
         get_tx_iterator: Some(crate::applayer::state_get_tx_iterator::<DNSState, DNSTransaction>),
         get_tx_data: rs_dns_state_get_tx_data,
+        get_state_data: rs_dns_get_state_data,
         apply_tx_config: Some(rs_dns_apply_tx_config),
         flags: APP_LAYER_PARSER_OPT_UNIDIR_TXS,
         truncate: None,
@@ -1023,9 +1027,10 @@ pub unsafe extern "C" fn rs_dns_tcp_register_parser() {
         get_eventinfo_byid: Some(DNSEvent::get_event_info_by_id),
         localstorage_new: None,
         localstorage_free: None,
-        get_files: None,
+        get_tx_files: None,
         get_tx_iterator: Some(crate::applayer::state_get_tx_iterator::<DNSState, DNSTransaction>),
         get_tx_data: rs_dns_state_get_tx_data,
+        get_state_data: rs_dns_get_state_data,
         apply_tx_config: Some(rs_dns_apply_tx_config),
         flags: APP_LAYER_PARSER_OPT_ACCEPT_GAPS | APP_LAYER_PARSER_OPT_UNIDIR_TXS,
         truncate: None,
@@ -1470,7 +1475,7 @@ mod tests {
     #[test]
     fn test_dns_event_from_string() {
         let name = "malformed_data";
-        let event = DNSEvent::from_string(&name).unwrap();
+        let event = DNSEvent::from_string(name).unwrap();
         assert_eq!(event, DNSEvent::MalformedData);
         assert_eq!(event.to_cstring(), format!("{}\0", name));
     }

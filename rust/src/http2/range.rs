@@ -19,7 +19,6 @@ use super::detect;
 use crate::core::{
     Direction, Flow, HttpRangeContainerBlock, StreamingBufferConfig, SuricataFileContext, SC,
 };
-use crate::filecontainer::FileContainer;
 use crate::http2::http2::HTTP2Transaction;
 
 use nom7::branch::alt;
@@ -130,15 +129,17 @@ fn http2_range_key_get(tx: &mut HTTP2Transaction) -> Result<(Vec<u8>, usize), ()
 
 pub fn http2_range_open(
     tx: &mut HTTP2Transaction, v: &HTTPContentRange, flow: *const Flow,
-    cfg: &'static SuricataFileContext, flags: u16, data: &[u8],
+    cfg: &'static SuricataFileContext, dir: Direction, data: &[u8],
 ) {
     if v.end <= 0 || v.size <= 0 {
         // skipped for incomplete range information
         return;
-    } else if v.end == v.size - 1 && v.start == 0 {
+    }
+    if v.end == v.size - 1 && v.start == 0 {
         // whole file in one range
         return;
     }
+    let (_, flags) = tx.files.get(dir);
     if let Ok((key, index)) = http2_range_key_get(tx) {
         let name = &key[index..];
         tx.file_range = unsafe {
@@ -165,9 +166,10 @@ pub fn http2_range_append(fr: *mut HttpRangeContainerBlock, data: &[u8]) {
 }
 
 pub fn http2_range_close(
-    tx: &mut HTTP2Transaction, files: &mut FileContainer, flags: u16, data: &[u8],
+    tx: &mut HTTP2Transaction, dir: Direction, data: &[u8],
 ) {
     let added = if let Some(c) = unsafe { SC } {
+        let (files, flags) = tx.files.get(dir);
         let added = (c.HTPFileCloseHandleRange)(
             files,
             flags,

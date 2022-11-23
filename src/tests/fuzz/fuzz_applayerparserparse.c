@@ -12,6 +12,7 @@
 #include "util-unittest-helper.h"
 #include "util-byte.h"
 #include "conf-yaml-loader.h"
+#include "util-conf.h"
 
 #define HEADER_LEN 6
 
@@ -169,7 +170,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
                 break;
             }
 
-            AppLayerParserTransactionsCleanup(f);
+            AppLayerParserTransactionsCleanup(f, flags & (STREAM_TOSERVER | STREAM_TOCLIENT));
         }
         alsize -= alnext - albuffer + 4;
         albuffer = alnext + 4;

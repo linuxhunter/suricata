@@ -187,6 +187,23 @@ int FlowHasAlerts(const Flow *f)
     return 0;
 }
 
+bool FlowHasGaps(const Flow *f, uint8_t way)
+{
+    if (f->proto == IPPROTO_TCP) {
+        TcpSession *ssn = (TcpSession *)f->protoctx;
+        if (ssn != NULL) {
+            if (way == STREAM_TOCLIENT) {
+                if (ssn->server.flags & STREAMTCP_STREAM_FLAG_HAS_GAP)
+                    return 1;
+            } else {
+                if (ssn->client.flags & STREAMTCP_STREAM_FLAG_HAS_GAP)
+                    return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /** \brief Set flag to indicate to change proto for the flow
  *
  * \param f flow
@@ -236,9 +253,11 @@ static inline void FlowSwapFlags(Flow *f)
 static inline void FlowSwapFileFlags(Flow *f)
 {
     SWAP_FLAGS(f->file_flags, FLOWFILE_NO_MAGIC_TS, FLOWFILE_NO_MAGIC_TC);
-    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_MAGIC_TS, FLOWFILE_NO_MAGIC_TC);
-    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_MAGIC_TS, FLOWFILE_NO_MAGIC_TC);
-    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_MAGIC_TS, FLOWFILE_NO_MAGIC_TC);
+    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_STORE_TS, FLOWFILE_NO_STORE_TC);
+    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_MD5_TS, FLOWFILE_NO_MD5_TC);
+    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_SHA1_TS, FLOWFILE_NO_SHA1_TC);
+    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_SHA256_TS, FLOWFILE_NO_SHA256_TC);
+    SWAP_FLAGS(f->file_flags, FLOWFILE_NO_SIZE_TS, FLOWFILE_NO_SIZE_TC);
 }
 
 static inline void TcpStreamFlowSwap(Flow *f)

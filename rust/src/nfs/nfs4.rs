@@ -17,9 +17,9 @@
 
 // written by Victor Julien
 
-use nom::bytes::streaming::take;
-use nom::number::streaming::be_u32;
-use nom7::Err;
+use nom7::bytes::streaming::take;
+use nom7::number::streaming::be_u32;
+use nom7::{Err, IResult};
 
 use crate::core::*;
 use crate::nfs::nfs::*;
@@ -30,8 +30,7 @@ use crate::nfs::types::*;
 
 use crate::kerberos::{parse_kerberos5_request, Kerberos5Ticket, SecBlobError};
 
-// use the old nom type until both SMB and NFS are migrated to nom 7
-fn parse_req_gssapi(i: &[u8]) -> nom::IResult<&[u8], Kerberos5Ticket, SecBlobError> {
+fn parse_req_gssapi(i: &[u8]) -> IResult<&[u8], Kerberos5Ticket, SecBlobError> {
     let (i, len) = be_u32(i)?;
     let (i, buf) = take(len as usize)(i)?;
     let (_, ap) = parse_kerberos5_request(buf)?;
@@ -43,7 +42,7 @@ impl NFSState {
      * is not part of the write record itself so we pass it in here. */
     fn write_v4<'b>(&mut self, r: &RpcPacket<'b>, w: &Nfs4RequestWrite<'b>, fh: &'b [u8]) {
         // for now assume that stable FILE_SYNC flags means a single chunk
-        let is_last = if w.stable == 2 { true } else { false };
+        let is_last = w.stable == 2;
         SCLogDebug!("is_last {}", is_last);
 
         let mut fill_bytes = 0;
@@ -67,20 +66,12 @@ impl NFSState {
         };
 
         let found = match self.get_file_tx_by_handle(&file_handle, Direction::ToServer) {
-            Some((tx, files, flags)) => {
+            Some(tx) => {
                 if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
-                    filetracker_newchunk(
-                        &mut tdf.file_tracker,
-                        files,
-                        flags,
-                        &file_name,
-                        w.data,
-                        w.offset,
-                        w.write_len,
-                        fill_bytes as u8,
-                        is_last,
-                        &r.hdr.xid,
-                    );
+                    let (files, flags) = tdf.files.get(Direction::ToServer);
+                    filetracker_newchunk(&mut tdf.file_tracker, files, flags,
+                            &file_name, w.data, w.offset,
+                            w.write_len, fill_bytes as u8, is_last, &r.hdr.xid);
                     tdf.chunk_count += 1;
                     if is_last {
                         tdf.file_last_xid = r.hdr.xid;
@@ -93,20 +84,12 @@ impl NFSState {
             None => false,
         };
         if !found {
-            let (tx, files, flags) = self.new_file_tx(&file_handle, &file_name, Direction::ToServer);
+            let tx = self.new_file_tx(&file_handle, &file_name, Direction::ToServer);
             if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
-                filetracker_newchunk(
-                    &mut tdf.file_tracker,
-                    files,
-                    flags,
-                    &file_name,
-                    w.data,
-                    w.offset,
-                    w.write_len,
-                    fill_bytes as u8,
-                    is_last,
-                    &r.hdr.xid,
-                );
+                let (files, flags) = tdf.files.get(Direction::ToServer);
+                filetracker_newchunk(&mut tdf.file_tracker, files, flags,
+                        &file_name, w.data, w.offset,
+                        w.write_len, fill_bytes as u8, is_last, &r.hdr.xid);
                 tx.procedure = NFSPROC4_WRITE;
                 tx.xid = r.hdr.xid;
                 tx.is_first = true;
@@ -121,7 +104,7 @@ impl NFSState {
         }
         self.ts_chunk_xid = r.hdr.xid;
         debug_validate_bug_on!(w.data.len() as u32 > w.write_len);
-        self.ts_chunk_left = w.write_len as u32 - w.data.len()  as u32;
+        self.ts_chunk_left = w.write_len - w.data.len()  as u32;
     }
 
     fn close_v4<'b>(&mut self, r: &RpcPacket<'b>, fh: &'b [u8]) {
@@ -132,9 +115,9 @@ impl NFSState {
         SCLogDebug!("COMMIT, closing shop");
 
         let file_handle = fh.to_vec();
-        if let Some((tx, files, flags)) = self.get_file_tx_by_handle(&file_handle, Direction::ToServer)
-        {
+        if let Some(tx) = self.get_file_tx_by_handle(&file_handle, Direction::ToServer) {
             if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
+                let (files, flags) = tdf.files.get(Direction::ToServer);
                 tdf.file_tracker.close(files, flags);
                 tdf.file_last_xid = r.hdr.xid;
                 tx.is_last = true;
@@ -146,7 +129,7 @@ impl NFSState {
 
     fn new_tx_v4<'b>(
         &mut self, r: &RpcPacket<'b>, xidmap: &NFSRequestXidMap, procedure: u32,
-        _aux_opcodes: &Vec<u32>,
+        _aux_opcodes: &[u32],
     ) {
         let mut tx = self.new_tx();
         tx.xid = r.hdr.xid;
@@ -201,11 +184,11 @@ impl NFSState {
                     }
                 }
                 &Nfs4RequestContent::Open(ref rd) => {
-                    SCLogDebug!("OPENv4: {}", String::from_utf8_lossy(&rd.filename));
+                    SCLogDebug!("OPENv4: {}", String::from_utf8_lossy(rd.filename));
                     xidmap.file_name = rd.filename.to_vec();
                 }
                 &Nfs4RequestContent::Lookup(ref rd) => {
-                    SCLogDebug!("LOOKUPv4: {}", String::from_utf8_lossy(&rd.filename));
+                    SCLogDebug!("LOOKUPv4: {}", String::from_utf8_lossy(rd.filename));
                     xidmap.file_name = rd.filename.to_vec();
                 }
                 &Nfs4RequestContent::Write(ref rd) => {
@@ -242,9 +225,9 @@ impl NFSState {
                 &Nfs4RequestContent::SetClientId(ref _rd) => {
                     SCLogDebug!(
                         "SETCLIENTIDv4: client id {} r_netid {} r_addr {}",
-                        String::from_utf8_lossy(&_rd.client_id),
-                        String::from_utf8_lossy(&_rd.r_netid),
-                        String::from_utf8_lossy(&_rd.r_addr)
+                        String::from_utf8_lossy(_rd.client_id),
+                        String::from_utf8_lossy(_rd.r_netid),
+                        String::from_utf8_lossy(_rd.r_addr)
                     );
                 }
                 &_ => {}
@@ -342,7 +325,7 @@ impl NFSState {
 
                         for d in &rd.listing {
                             if let &Some(ref _d) = d {
-                                SCLogDebug!("READDIRv4: dir {}", String::from_utf8_lossy(&_d.name));
+                                SCLogDebug!("READDIRv4: dir {}", String::from_utf8_lossy(_d.name));
                             }
                         }
                     }
@@ -393,7 +376,7 @@ impl NFSState {
                     }
                 }
                 &Nfs4ResponseContent::PutRootFH(s) => {
-                    if s == NFS4_OK && xidmap.file_name.len() == 0 {
+                    if s == NFS4_OK && xidmap.file_name.is_empty() {
                         xidmap.file_name = b"<mount_root>".to_vec();
                         SCLogDebug!("filename {:?}", xidmap.file_name);
                     }

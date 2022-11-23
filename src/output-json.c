@@ -68,7 +68,7 @@
 #include "flow-bit.h"
 #include "flow-storage.h"
 
-#include "source-pcap-file.h"
+#include "source-pcap-file-helper.h"
 
 #include "suricata-plugin.h"
 
@@ -79,6 +79,7 @@
 
 static void OutputJsonDeInitCtx(OutputCtx *);
 static void CreateEveCommunityFlowId(JsonBuilder *js, const Flow *f, const uint16_t seed);
+static int CreateJSONEther(JsonBuilder *parent, const Packet *p, const Flow *f);
 
 static const char *TRAFFIC_ID_PREFIX = "traffic/id/";
 static const char *TRAFFIC_LABEL_PREFIX = "traffic/label/";
@@ -127,7 +128,7 @@ json_t *SCJsonString(const char *val)
 /* Default Sensor ID value */
 static int64_t sensor_id = -1; /* -1 = not defined */
 
-void EveFileInfo(JsonBuilder *jb, const File *ff, const bool stored)
+void EveFileInfo(JsonBuilder *jb, const File *ff, const uint64_t tx_id, const bool stored)
 {
     jb_set_string_from_bytes(jb, "filename", ff->name, ff->name_len);
 
@@ -181,7 +182,7 @@ void EveFileInfo(JsonBuilder *jb, const File *ff, const bool stored)
         jb_set_uint(jb, "start", ff->start);
         jb_set_uint(jb, "end", ff->end);
     }
-    jb_set_uint(jb, "tx_id", ff->txid);
+    jb_set_uint(jb, "tx_id", tx_id);
 }
 
 static void EveAddPacketVars(const Packet *p, JsonBuilder *js_vars)
@@ -408,8 +409,6 @@ void EveAddMetadata(const Packet *p, const Flow *f, JsonBuilder *js)
     }
 }
 
-int CreateJSONEther(JsonBuilder *parent, const Packet *p, const Flow *f);
-
 void EveAddCommonOptions(const OutputJsonCommonSettings *cfg,
         const Packet *p, const Flow *f, JsonBuilder *js)
 {
@@ -563,28 +562,17 @@ void JsonAddrInfoInit(const Packet *p, enum OutputJsonLogDirection dir, JsonAddr
             return;
     }
 
-
     strlcpy(addr->src_ip, srcip, JSON_ADDR_LEN);
+    strlcpy(addr->dst_ip, dstip, JSON_ADDR_LEN);
 
-    switch(p->proto) {
-        case IPPROTO_ICMP:
-            break;
+    switch (p->proto) {
         case IPPROTO_UDP:
         case IPPROTO_TCP:
         case IPPROTO_SCTP:
             addr->sp = sp;
-            break;
-    }
-
-    strlcpy(addr->dst_ip, dstip, JSON_ADDR_LEN);
-
-    switch(p->proto) {
-        case IPPROTO_ICMP:
-            break;
-        case IPPROTO_UDP:
-        case IPPROTO_TCP:
-        case IPPROTO_SCTP:
             addr->dp = dp;
+            break;
+        default:
             break;
     }
 
@@ -764,23 +752,24 @@ static int MacSetIterateToJSON(uint8_t *val, MacSetSide side, void *data)
     return 0;
 }
 
-int CreateJSONEther(JsonBuilder *js, const Packet *p, const Flow *f)
+static int CreateJSONEther(JsonBuilder *js, const Packet *p, const Flow *f)
 {
-    if (unlikely(js == NULL))
-        return 0;
-    /* start new EVE sub-object */
-    jb_open_object(js, "ether");
-    if (p == NULL) {
-        MacSet *ms = NULL;
-        /* ensure we have a flow */
-        if (unlikely(f == NULL)) {
+    if (p != NULL) {
+        /* this is a packet context, so we need to add scalar fields */
+        if (p->ethh != NULL) {
+            jb_open_object(js, "ether");
+            uint8_t *src = p->ethh->eth_src;
+            uint8_t *dst = p->ethh->eth_dst;
+            JSONFormatAndAddMACAddr(js, "src_mac", src, false);
+            JSONFormatAndAddMACAddr(js, "dest_mac", dst, false);
             jb_close(js);
-            return 0;
         }
+    } else if (f != NULL) {
         /* we are creating an ether object in a flow context, so we need to
            append to arrays */
-        ms = FlowGetStorageById((Flow *)f, MacSetGetFlowStorageID());
+        MacSet *ms = FlowGetStorageById(f, MacSetGetFlowStorageID());
         if (ms != NULL && MacSetSize(ms) > 0) {
+            jb_open_object(js, "ether");
             JSONMACAddrInfo info;
             info.dst = jb_new_array();
             info.src = jb_new_array();
@@ -798,23 +787,9 @@ int CreateJSONEther(JsonBuilder *js, const Packet *p, const Flow *f)
             jb_set_object(js, "src_macs", info.src);
             jb_free(info.dst);
             jb_free(info.src);
-        }
-    } else {
-        /* this is a packet context, so we need to add scalar fields */
-        uint8_t *src, *dst;
-        if (p->ethh != NULL) {
-            if ((PKT_IS_TOCLIENT(p))) {
-                src = p->ethh->eth_dst;
-                dst = p->ethh->eth_src;
-            } else {
-                src = p->ethh->eth_src;
-                dst = p->ethh->eth_dst;
-            }
-            JSONFormatAndAddMACAddr(js, "src_mac", src, false);
-            JSONFormatAndAddMACAddr(js, "dest_mac", dst, false);
+            jb_close(js);
         }
     }
-    jb_close(js);
     return 0;
 }
 

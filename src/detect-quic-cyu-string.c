@@ -127,7 +127,7 @@ static uint8_t DetectEngineInspectQuicString(DetectEngineCtx *de_ctx,
  *  \param pectx inspection context
  */
 static void PrefilterTxQuicString(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p,
-        Flow *f, void *txv, const uint64_t idx, const uint8_t flags)
+        Flow *f, void *txv, const uint64_t idx, const AppLayerTxData *_txd, const uint8_t flags)
 {
     SCEnter();
 
@@ -205,6 +205,7 @@ void DetectQuicCyuStringRegister(void)
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
 #include "flow-util.h"
+#include "detect-engine-alert.h"
 
 /**
  * \test DetectQuicCyuStringTest01 is a test for a valid quic packet, matching

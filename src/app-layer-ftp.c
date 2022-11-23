@@ -26,41 +26,17 @@
  */
 
 #include "suricata-common.h"
-#include "decode.h"
-#include "threads.h"
-
-#include "util-print.h"
-#include "util-pool.h"
-
-#include "flow-util.h"
-#include "flow-storage.h"
-
-#include "detect-engine-state.h"
-
-#include "stream-tcp-private.h"
-#include "stream-tcp-reassemble.h"
-#include "stream-tcp.h"
-#include "stream.h"
-
-#include "app-layer.h"
-#include "app-layer-protos.h"
-#include "app-layer-parser.h"
 #include "app-layer-ftp.h"
+#include "app-layer.h"
+#include "app-layer-parser.h"
 #include "app-layer-expectation.h"
 #include "app-layer-detect-proto.h"
 
-#include "util-spm.h"
-#include "util-mpm.h"
-#include "util-unittest.h"
-#include "util-debug.h"
-#include "util-memcmp.h"
-#include "util-memrchr.h"
-#include "util-mem.h"
-#include "util-misc.h"
-#include "util-validate.h"
-
-#include "output-json.h"
 #include "rust.h"
+
+#include "util-misc.h"
+#include "util-mpm.h"
+#include "util-validate.h"
 
 typedef struct FTPThreadCtx_ {
     MpmThreadCtx *ftp_mpm_thread_ctx;
@@ -1025,6 +1001,12 @@ static AppLayerTxData *FTPGetTxData(void *vtx)
     return &tx->tx_data;
 }
 
+static AppLayerStateData *FTPGetStateData(void *vstate)
+{
+    FtpState *s = (FtpState *)vstate;
+    return &s->state_data;
+}
+
 static void FTPStateTransactionFree(void *state, uint64_t tx_id)
 {
     FtpState *ftp_state = state;
@@ -1117,14 +1099,23 @@ static AppLayerResult FTPDataParse(Flow *f, FtpDataState *ftpdata_state,
 {
     const uint8_t *input = StreamSliceGetData(&stream_slice);
     uint32_t input_len = StreamSliceGetDataLen(&stream_slice);
-    uint16_t flags = FileFlowToFlags(f, direction) | FILE_USE_DETECT;
-    int ret = 0;
-    const bool eof = (flags & STREAM_TOSERVER)
+    const bool eof = (direction & STREAM_TOSERVER)
                              ? AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TS) != 0
                              : AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TC) != 0;
 
+    ftpdata_state->tx_data.file_flags |= ftpdata_state->state_data.file_flags;
+    if (ftpdata_state->tx_data.file_tx == 0)
+        ftpdata_state->tx_data.file_tx = direction & (STREAM_TOSERVER | STREAM_TOCLIENT);
+
+    /* we depend on detection engine for file pruning */
+    const uint16_t flags =
+            FileFlowFlagsToFlags(ftpdata_state->tx_data.file_flags, direction) | FILE_USE_DETECT;
+    int ret = 0;
+
     SCLogDebug("FTP-DATA input_len %u flags %04x dir %d/%s EOF %s", input_len, flags, direction,
             (direction & STREAM_TOSERVER) ? "toserver" : "toclient", eof ? "true" : "false");
+
+    SCLogDebug("FTP-DATA flags %04x dir %d", flags, direction);
     if (input_len && ftpdata_state->files == NULL) {
         struct FtpTransferCmd *data =
                 (struct FtpTransferCmd *)FlowGetStorageById(f, AppLayerExpectationGetFlowId());
@@ -1287,6 +1278,12 @@ static AppLayerTxData *FTPDataGetTxData(void *vtx)
     return &ftp_state->tx_data;
 }
 
+static AppLayerStateData *FTPDataGetStateData(void *vstate)
+{
+    FtpDataState *ftp_state = (FtpDataState *)vstate;
+    return &ftp_state->state_data;
+}
+
 static void FTPDataStateTransactionFree(void *state, uint64_t tx_id)
 {
     /* do nothing */
@@ -1313,9 +1310,9 @@ static int FTPDataGetAlstateProgress(void *tx, uint8_t direction)
         return FTPDATA_STATE_FINISHED;
 }
 
-static FileContainer *FTPDataStateGetFiles(void *state, uint8_t direction)
+static FileContainer *FTPDataStateGetTxFiles(void *tx, uint8_t direction)
 {
-    FtpDataState *ftpdata_state = (FtpDataState *)state;
+    FtpDataState *ftpdata_state = (FtpDataState *)tx;
 
     if (direction != ftpdata_state->direction)
         SCReturnPtr(NULL, "FileContainer");
@@ -1422,6 +1419,7 @@ void RegisterFTPParsers(void)
         AppLayerParserRegisterGetTx(IPPROTO_TCP, ALPROTO_FTP, FTPGetTx);
         AppLayerParserRegisterTxDataFunc(IPPROTO_TCP, ALPROTO_FTP, FTPGetTxData);
         AppLayerParserRegisterGetTxIterator(IPPROTO_TCP, ALPROTO_FTP, FTPGetTxIterator);
+        AppLayerParserRegisterStateDataFunc(IPPROTO_TCP, ALPROTO_FTP, FTPGetStateData);
 
         AppLayerParserRegisterLocalStorageFunc(IPPROTO_TCP, ALPROTO_FTP, FTPLocalStorageAlloc,
                                                FTPLocalStorageFree);
@@ -1441,10 +1439,11 @@ void RegisterFTPParsers(void)
         AppLayerParserRegisterParserAcceptableDataDirection(IPPROTO_TCP, ALPROTO_FTPDATA, STREAM_TOSERVER | STREAM_TOCLIENT);
         AppLayerParserRegisterTxFreeFunc(IPPROTO_TCP, ALPROTO_FTPDATA, FTPDataStateTransactionFree);
 
-        AppLayerParserRegisterGetFilesFunc(IPPROTO_TCP, ALPROTO_FTPDATA, FTPDataStateGetFiles);
+        AppLayerParserRegisterGetTxFilesFunc(IPPROTO_TCP, ALPROTO_FTPDATA, FTPDataStateGetTxFiles);
 
         AppLayerParserRegisterGetTx(IPPROTO_TCP, ALPROTO_FTPDATA, FTPDataGetTx);
         AppLayerParserRegisterTxDataFunc(IPPROTO_TCP, ALPROTO_FTPDATA, FTPDataGetTxData);
+        AppLayerParserRegisterStateDataFunc(IPPROTO_TCP, ALPROTO_FTPDATA, FTPDataGetStateData);
 
         AppLayerParserRegisterGetTxCnt(IPPROTO_TCP, ALPROTO_FTPDATA, FTPDataGetTxCnt);
 
@@ -1542,6 +1541,7 @@ void FTPParserCleanup(void)
 
 /* UNITTESTS */
 #ifdef UNITTESTS
+#include "stream-tcp.h"
 
 /** \test Send a get request in one chunk. */
 static int FTPParserTest01(void)

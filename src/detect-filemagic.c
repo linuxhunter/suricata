@@ -484,17 +484,14 @@ static uint8_t DetectEngineInspectFilemagic(DetectEngineCtx *de_ctx, DetectEngin
         transforms = engine->v2.transforms;
     }
 
-    FileContainer *ffc = AppLayerParserGetFiles(f, flags);
+    FileContainer *ffc = AppLayerParserGetTxFiles(f, txv, flags);
     if (ffc == NULL) {
-        return DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
+        return DETECT_ENGINE_INSPECT_SIG_CANT_MATCH_FILES;
     }
 
     uint8_t r = DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
     int local_file_id = 0;
     for (File *file = ffc->head; file != NULL; file = file->next) {
-        if (file->txid != tx_id)
-            continue;
-
         InspectionBuffer *buffer = FilemagicGetDataCallback(det_ctx,
             transforms, f, flags, file, engine->sm_list, local_file_id, false);
         if (buffer == NULL)
@@ -533,24 +530,22 @@ typedef struct PrefilterMpmFilemagic {
  *  \param txv tx to inspect
  *  \param pectx inspection context
  */
-static void PrefilterTxFilemagic(DetectEngineThreadCtx *det_ctx,
-        const void *pectx,
-        Packet *p, Flow *f, void *txv,
-        const uint64_t idx, const uint8_t flags)
+static void PrefilterTxFilemagic(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p,
+        Flow *f, void *txv, const uint64_t idx, const AppLayerTxData *txd, const uint8_t flags)
 {
     SCEnter();
+
+    if (!AppLayerParserHasFilesInDir(txd, flags))
+        return;
 
     const PrefilterMpmFilemagic *ctx = (const PrefilterMpmFilemagic *)pectx;
     const MpmCtx *mpm_ctx = ctx->mpm_ctx;
     const int list_id = ctx->list_id;
 
-    FileContainer *ffc = AppLayerParserGetFiles(f, flags);
+    FileContainer *ffc = AppLayerParserGetTxFiles(f, txv, flags);
     if (ffc != NULL) {
         int local_file_id = 0;
         for (File *file = ffc->head; file != NULL; file = file->next) {
-            if (file->txid != idx)
-                continue;
-
             InspectionBuffer *buffer = FilemagicGetDataCallback(det_ctx,
                     ctx->transforms, f, flags, file, list_id, local_file_id, true);
             if (buffer == NULL)
@@ -595,11 +590,9 @@ static int PrefilterMpmFilemagicRegister(DetectEngineCtx *de_ctx,
 static int DetectFilemagicTestParse01 (void)
 {
     DetectFilemagicData *dnd = DetectFilemagicParse(NULL, "secret.pdf", false);
-    if (dnd != NULL) {
-        DetectFilemagicFree(NULL, dnd);
-        return 1;
-    }
-    return 0;
+    FAIL_IF_NULL(dnd);
+    DetectFilemagicFree(NULL, dnd);
+    PASS;
 }
 
 /**
@@ -607,18 +600,12 @@ static int DetectFilemagicTestParse01 (void)
  */
 static int DetectFilemagicTestParse02 (void)
 {
-    int result = 0;
-
     DetectFilemagicData *dnd = DetectFilemagicParse(NULL, "backup.tar.gz", false);
-    if (dnd != NULL) {
-        if (dnd->len == 13 && memcmp(dnd->name, "backup.tar.gz", 13) == 0) {
-            result = 1;
-        }
-
-        DetectFilemagicFree(NULL, dnd);
-        return result;
-    }
-    return 0;
+    FAIL_IF_NULL(dnd);
+    FAIL_IF_NOT(dnd->len == 13);
+    FAIL_IF_NOT(memcmp(dnd->name, "backup.tar.gz", 13) == 0);
+    DetectFilemagicFree(NULL, dnd);
+    PASS;
 }
 
 /**
@@ -626,18 +613,12 @@ static int DetectFilemagicTestParse02 (void)
  */
 static int DetectFilemagicTestParse03 (void)
 {
-    int result = 0;
-
     DetectFilemagicData *dnd = DetectFilemagicParse(NULL, "cmd.exe", false);
-    if (dnd != NULL) {
-        if (dnd->len == 7 && memcmp(dnd->name, "cmd.exe", 7) == 0) {
-            result = 1;
-        }
-
-        DetectFilemagicFree(NULL, dnd);
-        return result;
-    }
-    return 0;
+    FAIL_IF_NULL(dnd);
+    FAIL_IF_NOT(dnd->len == 7);
+    FAIL_IF_NOT(memcmp(dnd->name, "cmd.exe", 7) == 0);
+    DetectFilemagicFree(NULL, dnd);
+    PASS;
 }
 
 /**

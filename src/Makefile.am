@@ -14,7 +14,6 @@ noinst_HEADERS = \
 	alert-debuglog.h \
 	alert-fastlog.h \
 	alert-syslog.h \
-	app-layer-dcerpc-common.h \
 	app-layer-detect-proto.h \
 	app-layer-dnp3.h \
 	app-layer-dnp3-objects.h \
@@ -62,6 +61,8 @@ noinst_HEADERS = \
 	conf-yaml-loader.h \
 	counters.h \
 	datasets.h \
+	datasets-ipv4.h \
+	datasets-ipv6.h \
 	datasets-md5.h \
 	datasets-reputation.h \
 	datasets-sha256.h \
@@ -224,6 +225,7 @@ noinst_HEADERS = \
 	detect-ike-nonce-payload-length.h \
 	detect-ike-nonce-payload.h \
 	detect-ike-key-exchange-payload.h \
+	detect-ipaddr.h \
 	detect-ipopts.h \
 	detect-ipproto.h \
 	detect-iprep.h \
@@ -292,6 +294,7 @@ noinst_HEADERS = \
 	detect-sip-stat-code.h \
 	detect-sip-stat-msg.h \
 	detect-sip-uri.h \
+	detect-smb-ntlmssp.h \
 	detect-smb-share.h \
 	detect-snmp-community.h \
 	detect-snmp-pdu_type.h \
@@ -401,6 +404,7 @@ noinst_HEADERS = \
 	output.h \
 	output-json-alert.h \
 	output-json-anomaly.h \
+	output-json-bittorrent-dht.h \
 	output-json-dcerpc.h \
 	output-json-dhcp.h \
 	output-json-dnp3.h \
@@ -443,6 +447,7 @@ noinst_HEADERS = \
 	output-streaming.h \
 	output-tx.h \
 	output-redis-ics.h \
+	packet.h \
 	packet-queue.h \
 	pkt-var.h \
 	queue.h \
@@ -486,6 +491,7 @@ noinst_HEADERS = \
 	source-windivert-prototypes.h \
 	stream.h \
 	stream-tcp.h \
+	stream-tcp-cache.h \
 	stream-tcp-inline.h \
 	stream-tcp-list.h \
 	stream-tcp-private.h \
@@ -676,6 +682,8 @@ libsuricata_c_a_SOURCES = \
 	conf-yaml-loader.c \
 	counters.c \
 	datasets.c \
+	datasets-ipv4.c \
+	datasets-ipv6.c \
 	datasets-md5.c \
 	datasets-sha256.c \
 	datasets-string.c \
@@ -837,6 +845,7 @@ libsuricata_c_a_SOURCES = \
 	detect-ike-nonce-payload-length.c \
 	detect-ike-nonce-payload.c \
 	detect-ike-key-exchange-payload.c \
+	detect-ipaddr.c \
 	detect-ipopts.c \
 	detect-ipproto.c \
 	detect-iprep.c \
@@ -905,6 +914,7 @@ libsuricata_c_a_SOURCES = \
 	detect-sip-stat-code.c \
 	detect-sip-stat-msg.c \
 	detect-sip-uri.c \
+	detect-smb-ntlmssp.c \
 	detect-smb-share.c \
 	detect-snmp-community.c \
 	detect-snmp-pdu_type.c \
@@ -1013,6 +1023,7 @@ libsuricata_c_a_SOURCES = \
 	output-flow.c \
 	output-json-alert.c \
 	output-json-anomaly.c \
+	output-json-bittorrent-dht.c \
 	output-json.c \
 	output-json-common.c \
 	output-json-dcerpc.c \
@@ -1056,6 +1067,7 @@ libsuricata_c_a_SOURCES = \
 	output-streaming.c \
 	output-tx.c \
 	output-redis-ics.c \
+	packet.c \
 	packet-queue.c \
 	pkt-var.c \
 	reputation.c \
@@ -1095,6 +1107,7 @@ libsuricata_c_a_SOURCES = \
 	source-windivert.c \
 	stream.c \
 	stream-tcp.c \
+	stream-tcp-cache.c \
 	stream-tcp-inline.c \
 	stream-tcp-list.c \
 	stream-tcp-reassemble.c \
@@ -1278,6 +1291,7 @@ EXTRA_DIST = \
 	tests/detect-tls-cert-validity.c \
 	tests/detect-tls-certs.c \
 	tests/detect-tls-version.c \
+	tests/detect-ipaddr.c \
 	tests/detect.c \
 	tests/stream-tcp.c
 

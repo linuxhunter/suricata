@@ -24,6 +24,7 @@ Suricata Rules
    enip-keyword
    ftp-keywords
    kerberos-keywords
+   smb-keywords
    snmp-keywords
    base64-keywords
    sip-keywords
@@ -36,6 +37,7 @@ Suricata Rules
    xbits
    thresholding
    ip-reputation-rules
+   ipaddr
    config
    datasets
    lua-detection

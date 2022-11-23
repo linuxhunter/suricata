@@ -81,6 +81,7 @@
 #include "util-validate.h"
 #include "util-hash-string.h"
 #include "util-enum.h"
+#include "util-conf.h"
 
 #include "tm-threads.h"
 #include "runmodes.h"
@@ -492,7 +493,6 @@ static void DetectFrameInspectEngineCopy(DetectEngineCtx *de_ctx, int sm_list, i
             }
 
             list->next = new_engine;
-            break;
         }
         t = t->next;
     }

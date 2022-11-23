@@ -70,7 +70,7 @@ typedef struct TcpSegmentPcapHdrStorage_ {
 } TcpSegmentPcapHdrStorage;
 
 typedef struct TcpSegment {
-    PoolThreadReserved res;
+    PoolThreadId pool_id;
     uint16_t payload_len;       /**< actual size of the payload */
     uint32_t seq;
     RB_ENTRY(TcpSegment) __attribute__((__packed__)) rb;
@@ -206,7 +206,8 @@ enum TcpState {
  * Per STREAM flags
  */
 
-// bit 0 vacant
+/** Flag to indicate that we have seen gap on the stream */
+#define STREAMTCP_STREAM_FLAG_HAS_GAP BIT_U16(0)
 /** Flag to avoid stream reassembly/app layer inspection for the stream */
 #define STREAMTCP_STREAM_FLAG_NOREASSEMBLY                  BIT_U16(1)
 /** we received a keep alive */
@@ -269,7 +270,7 @@ enum TcpState {
 }
 
 typedef struct TcpSession_ {
-    PoolThreadReserved res;
+    PoolThreadId pool_id;
     uint8_t state:4;                        /**< tcp state from state enum */
     uint8_t pstate:4;                       /**< previous state */
     uint8_t queue_len;                      /**< length of queue list below */

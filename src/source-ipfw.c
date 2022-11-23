@@ -27,6 +27,7 @@
 #include "suricata-common.h"
 #include "suricata.h"
 #include "decode.h"
+#include "packet.h"
 #include "packet-queue.h"
 #include "threads.h"
 #include "threadvars.h"
@@ -97,6 +98,8 @@ TmEcode NoIPFWSupportExit(ThreadVars *tv, const void *initdata, void **data)
 }
 
 #else /* We have IPFW compiled in */
+
+#include "action-globals.h"
 
 extern int max_pending_packets;
 
@@ -239,6 +242,11 @@ TmEcode ReceiveIPFWLoop(ThreadVars *tv, void *data, void *slot)
 
     SCLogInfo("Thread '%s' will run on port %d (item %d)",
               tv->name, nq->port_num, ptv->ipfw_index);
+
+    // Indicate that the thread is actually running its application level code (i.e., it can poll
+    // packets)
+    TmThreadsSetFlag(tv, THV_RUNNING);
+
     while (1) {
         if (unlikely(suricata_ctl_flags != 0)) {
             SCReturnInt(TM_ECODE_OK);
@@ -528,7 +536,7 @@ TmEcode IPFWSetVerdict(ThreadVars *tv, IPFWThreadVars *ptv, Packet *p)
     IPFWpoll.events = POLLWRNORM;
 #endif
 
-    if (PacketTestAction(p, ACTION_DROP)) {
+    if (PacketCheckAction(p, ACTION_DROP)) {
         verdict = IPFW_DROP;
     } else {
         verdict = IPFW_ACCEPT;

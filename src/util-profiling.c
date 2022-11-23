@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2012 Open Information Security Foundation
+/* Copyright (C) 2007-2021 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -27,20 +27,15 @@
  */
 
 #include "suricata-common.h"
-#include "decode.h"
-#include "detect.h"
-#include "detect-engine-prefilter.h"
-#include "conf.h"
-#include "flow-worker.h"
-
-#include "tm-threads.h"
-
-#include "util-unittest.h"
-#include "util-byte.h"
 #include "util-profiling.h"
-#include "util-profiling-locks.h"
 
 #ifdef PROFILING
+#include "tm-threads.h"
+#include "conf.h"
+#include "util-unittest.h"
+#include "util-byte.h"
+#include "util-profiling-locks.h"
+#include "util-conf.h"
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -1263,42 +1258,18 @@ const char * PacketProfileLoggertIdToString(LoggerId id)
 {
     switch (id) {
         CASE_CODE (LOGGER_UNDEFINED);
+        CASE_CODE(LOGGER_HTTP);
+        CASE_CODE(LOGGER_TLS_STORE);
+        CASE_CODE(LOGGER_TLS);
+        CASE_CODE(LOGGER_JSON_TX);
+        CASE_CODE(LOGGER_FILE);
+        CASE_CODE(LOGGER_FILEDATA);
         CASE_CODE (LOGGER_ALERT_DEBUG);
         CASE_CODE (LOGGER_ALERT_FAST);
         CASE_CODE (LOGGER_ALERT_SYSLOG);
         CASE_CODE (LOGGER_JSON_ALERT);
         CASE_CODE (LOGGER_JSON_ANOMALY);
-        CASE_CODE (LOGGER_JSON_DROP);
-        CASE_CODE (LOGGER_JSON_SSH);
-        CASE_CODE (LOGGER_JSON_SMB);
-        CASE_CODE (LOGGER_JSON_NFS);
-        CASE_CODE(LOGGER_JSON_FRAME);
-        CASE_CODE (LOGGER_HTTP);
-        CASE_CODE(LOGGER_JSON_DNS);
-        CASE_CODE (LOGGER_JSON_DNP3_TS);
-        CASE_CODE (LOGGER_JSON_DNP3_TC);
-        CASE_CODE (LOGGER_JSON_HTTP);
-        CASE_CODE(LOGGER_JSON_QUIC);
-        CASE_CODE (LOGGER_JSON_DHCP);
-        CASE_CODE (LOGGER_JSON_KRB5);
-        CASE_CODE(LOGGER_JSON_IKE);
-        CASE_CODE(LOGGER_JSON_MODBUS);
-        CASE_CODE (LOGGER_JSON_FTP);
-        CASE_CODE (LOGGER_JSON_TFTP);
-        CASE_CODE (LOGGER_JSON_SMTP);
-        CASE_CODE (LOGGER_JSON_SNMP);
-        CASE_CODE (LOGGER_JSON_TLS);
-        CASE_CODE (LOGGER_JSON_SIP);
-        CASE_CODE (LOGGER_JSON_TEMPLATE_RUST);
-        CASE_CODE (LOGGER_JSON_RFB);
-        CASE_CODE (LOGGER_JSON_MQTT);
-        CASE_CODE(LOGGER_JSON_PGSQL);
-        CASE_CODE (LOGGER_JSON_TEMPLATE);
-        CASE_CODE (LOGGER_JSON_RDP);
-        CASE_CODE (LOGGER_JSON_DCERPC);
-        CASE_CODE (LOGGER_JSON_HTTP2);
-        CASE_CODE (LOGGER_TLS_STORE);
-        CASE_CODE (LOGGER_TLS);
+        CASE_CODE(LOGGER_JSON_DROP);
         CASE_CODE (LOGGER_FILE_STORE);
         CASE_CODE (LOGGER_JSON_FILE);
         CASE_CODE (LOGGER_TCP_DATA);
@@ -1308,6 +1279,8 @@ const char * PacketProfileLoggertIdToString(LoggerId id)
         CASE_CODE (LOGGER_JSON_STATS);
         CASE_CODE (LOGGER_PCAP);
         CASE_CODE (LOGGER_JSON_METADATA);
+        CASE_CODE(LOGGER_JSON_FRAME);
+
         case LOGGER_SIZE:
             return "UNKNOWN";
     }

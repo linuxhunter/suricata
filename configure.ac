@@ -1,4 +1,4 @@
-    AC_INIT([suricata],[7.0.0-dev])
+    AC_INIT([suricata],[7.0.0-beta1])
     m4_ifndef([AM_SILENT_RULES], [m4_define([AM_SILENT_RULES],[])])AM_SILENT_RULES([yes])
     AC_CONFIG_HEADERS([src/autoconf.h])
     AC_CONFIG_SRCDIR([src/suricata.c])
@@ -209,6 +209,7 @@
     AC_CHECK_FUNCS([gethostname inet_ntoa uname])
     AC_CHECK_FUNCS([gettimeofday clock_gettime utime strptime tzset localtime_r])
     AC_CHECK_FUNCS([socket setenv select putenv dup2 endgrent endpwent atexit munmap])
+    AC_CHECK_FUNCS([setrlimit])
 
     AC_CHECK_FUNCS([fwrite_unlocked])
 
@@ -579,6 +580,19 @@
         LIBS="${TMPLIBS} -lz"
     fi
 
+    AC_ARG_WITH(libpcre2_includes,
+            [  --with-libpcre2-includes=DIR  libpcre2 include directory],
+            [with_libpcre2_includes="$withval"],[with_libpcre2_includes="no"])
+    AC_ARG_WITH(libpcre2_libraries,
+            [  --with-libpcre2-libraries=DIR    libpcre2 library directory],
+            [with_libpcre2_libraries="$withval"],[with_libpcre2_libraries="no"])
+
+    if test "$with_libpcre2_includes" != "no"; then
+        CPPFLAGS="${CPPFLAGS} -I${with_libpcre2_includes}"
+    fi
+    if test "$with_libpcre2_libraries" != "no"; then
+        LDFLAGS="${LDFLAGS} -L${with_libpcre2_libraries}"
+    fi
     PCRE2=""
     AC_CHECK_LIB(pcre2-8, pcre2_compile_8,,PCRE2="no")
     if test "$PCRE2" = "no"; then
@@ -607,6 +621,35 @@
         AC_MSG_RESULT(no)
     fi
 
+  #systemd
+    AC_ARG_WITH(systemd_includes,
+            [  --with-systemd-includes=DIR  systemd include directory],
+            [with_systemd_includes="$withval"],[with_systemd_includes=no])
+    AC_ARG_WITH(systemd_libraries,
+            [  --with-systemd-libraries=DIR    systemd library directory],
+            [with_systemd_libraries="$withval"],[with_systemd_libraries="no"])
+
+    AC_CHECK_HEADER(systemd/sd-daemon.h, SYSTEMD="yes",SYSTEMD="no")
+    if test "$SYSTEMD" = "yes"; then
+        if test "$with_systemd_libraries" != "no"; then
+            LDFLAGS="${LDFLAGS} -L${with_systemd_libraries}"
+        fi
+
+        if test "$with_systemd_includes" != "no"; then
+            CPPFLAGS="${CPPFLAGS} -I${with_systems_includes}"
+        fi
+
+        # To prevent duping the lib link we reset LIBS after this check. Setting action-if-found to NULL doesn't seem to work
+        # see: http://blog.flameeyes.eu/2008/04/29/i-consider-ac_check_lib-harmful
+        SYSTEMD=""
+        TMPLIBS="${LIBS}"
+        AC_CHECK_LIB(systemd,sd_notify,,SYSTEMD="no")
+
+        if test "$SYSTEMD" != "no"; then
+            LIBS="${TMPLIBS} -lsystemd"
+        fi
+    fi
+  
   # libhs
     enable_hyperscan="no"
 
@@ -1321,12 +1364,6 @@
         fi
 
         AC_DEFINE([HAVE_DPDK],[1],(DPDK support enabled))
-        PKG_CHECK_EXISTS(libdpdk >= 20.11, [pkgconfig_libdpdk_above20=yes], )
-        if test "$pkgconfig_libdpdk_above20" = "yes"; then
-            AC_DEFINE([HAVE_STRLCAT],[1],[STRLCAT is predefined by DPDK 20.11+])
-            AC_DEFINE([HAVE_STRLCPY],[1],[STRLCPY is predefined by DPDK 20.11+])
-        fi
-
         PKG_CHECK_EXISTS(libdpdk >= 19.11, , [with_pkgconfig_libdpdk=no])
         if test "$with_pkgconfig_libdpdk" = "no"; then
             echo
@@ -2159,7 +2196,7 @@ fi
     AC_PATH_PROG(RUSTC, rustc, "no")
     if test "$RUSTC" = "no"; then
         echo ""
-        echo "    ERROR: Suricata now requires Rust to build."
+        echo "    ERROR: Rust compiler not found."
         echo ""
         echo "    Ubuntu/Debian: apt install rustc cargo"
         echo "    Fedora: dnf install rustc cargo"

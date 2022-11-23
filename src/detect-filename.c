@@ -49,6 +49,7 @@
 #include "util-profiling.h"
 
 #include "app-layer.h"
+#include "app-layer-htp.h"
 
 #include "stream-tcp.h"
 
@@ -158,8 +159,7 @@ void DetectFilenameRegister(void)
                 0);
     }
 
-    DetectBufferTypeSetDescriptionByName("file.name",
-            "http user agent");
+    DetectBufferTypeSetDescriptionByName("file.name", "file name");
 
     g_file_name_buffer_id = DetectBufferTypeGetByName("file.name");
 	SCLogDebug("registering filename rule option");
@@ -380,17 +380,14 @@ static uint8_t DetectEngineInspectFilename(DetectEngineCtx *de_ctx, DetectEngine
         transforms = engine->v2.transforms;
     }
 
-    FileContainer *ffc = AppLayerParserGetFiles(f, flags);
+    FileContainer *ffc = AppLayerParserGetTxFiles(f, txv, flags);
     if (ffc == NULL) {
-        return DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
+        return DETECT_ENGINE_INSPECT_SIG_CANT_MATCH_FILES;
     }
 
     uint8_t r = DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
     int local_file_id = 0;
     for (File *file = ffc->head; file != NULL; file = file->next) {
-        if (file->txid != tx_id)
-            continue;
-
         InspectionBuffer *buffer = FilenameGetDataCallback(det_ctx,
             transforms, f, flags, file, engine->sm_list, local_file_id, false);
         if (buffer == NULL)
@@ -429,24 +426,22 @@ typedef struct PrefilterMpmFilename {
  *  \param txv tx to inspect
  *  \param pectx inspection context
  */
-static void PrefilterTxFilename(DetectEngineThreadCtx *det_ctx,
-        const void *pectx,
-        Packet *p, Flow *f, void *txv,
-        const uint64_t idx, const uint8_t flags)
+static void PrefilterTxFilename(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p,
+        Flow *f, void *txv, const uint64_t idx, const AppLayerTxData *txd, const uint8_t flags)
 {
     SCEnter();
+
+    if (!AppLayerParserHasFilesInDir(txd, flags))
+        return;
 
     const PrefilterMpmFilename *ctx = (const PrefilterMpmFilename *)pectx;
     const MpmCtx *mpm_ctx = ctx->mpm_ctx;
     const int list_id = ctx->list_id;
 
-    FileContainer *ffc = AppLayerParserGetFiles(f, flags);
+    FileContainer *ffc = AppLayerParserGetTxFiles(f, txv, flags);
     if (ffc != NULL) {
         int local_file_id = 0;
         for (File *file = ffc->head; file != NULL; file = file->next) {
-            if (file->txid != idx)
-                continue;
-
             InspectionBuffer *buffer = FilenameGetDataCallback(det_ctx,
                     ctx->transforms, f, flags, file, list_id, local_file_id, true);
             if (buffer == NULL)
@@ -509,11 +504,9 @@ static int DetectFilenameSignatureParseTest01(void)
 static int DetectFilenameTestParse01 (void)
 {
     DetectFilenameData *dnd = DetectFilenameParse(NULL, "secret.pdf", false);
-    if (dnd != NULL) {
-        DetectFilenameFree(NULL, dnd);
-        return 1;
-    }
-    return 0;
+    FAIL_IF_NULL(dnd);
+    DetectFilenameFree(NULL, dnd);
+    PASS;
 }
 
 /**
@@ -521,18 +514,12 @@ static int DetectFilenameTestParse01 (void)
  */
 static int DetectFilenameTestParse02 (void)
 {
-    int result = 0;
-
     DetectFilenameData *dnd = DetectFilenameParse(NULL, "backup.tar.gz", false);
-    if (dnd != NULL) {
-        if (dnd->len == 13 && memcmp(dnd->name, "backup.tar.gz", 13) == 0) {
-            result = 1;
-        }
-
-        DetectFilenameFree(NULL, dnd);
-        return result;
-    }
-    return 0;
+    FAIL_IF_NULL(dnd);
+    FAIL_IF_NOT(dnd->len == 13);
+    FAIL_IF_NOT(memcmp(dnd->name, "backup.tar.gz", 13) == 0);
+    DetectFilenameFree(NULL, dnd);
+    PASS;
 }
 
 /**
@@ -540,20 +527,13 @@ static int DetectFilenameTestParse02 (void)
  */
 static int DetectFilenameTestParse03 (void)
 {
-    int result = 0;
-
     DetectFilenameData *dnd = DetectFilenameParse(NULL, "cmd.exe", false);
-    if (dnd != NULL) {
-        if (dnd->len == 7 && memcmp(dnd->name, "cmd.exe", 7) == 0) {
-            result = 1;
-        }
-
-        DetectFilenameFree(NULL, dnd);
-        return result;
-    }
-    return 0;
+    FAIL_IF_NULL(dnd);
+    FAIL_IF_NOT(dnd->len == 7);
+    FAIL_IF_NOT(memcmp(dnd->name, "cmd.exe", 7) == 0);
+    DetectFilenameFree(NULL, dnd);
+    PASS;
 }
-
 
 /**
  * \brief this function registers unit tests for DetectFilename

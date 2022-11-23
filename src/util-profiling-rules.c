@@ -25,19 +25,12 @@
  */
 
 #include "suricata-common.h"
-#include "decode.h"
-#include "detect.h"
-#include "conf.h"
-
-#include "tm-threads.h"
-
-#include "util-unittest.h"
-#include "util-byte.h"
 #include "util-profiling.h"
-#include "util-profiling-locks.h"
-#include "util-time.h"
 
 #ifdef PROFILING
+#include "util-byte.h"
+#include "util-conf.h"
+#include "util-time.h"
 
 /**
  * Extra data for rule profiling.
@@ -347,7 +340,7 @@ static void DumpJson(FILE *fp, SCProfileSummary *summary,
 
     if (unlikely(js_s == NULL))
         return;
-    fprintf(fp, "%s", js_s);
+    fprintf(fp, "%s\n", js_s);
     free(js_s);
     json_decref(js);
 }

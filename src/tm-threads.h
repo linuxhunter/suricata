@@ -28,6 +28,7 @@
 #include "tmqh-packetpool.h"
 #include "tm-threads-common.h"
 #include "tm-modules.h"
+#include "flow.h" // for the FlowQueue
 
 #ifdef OS_WIN32
 static inline void SleepUsec(uint64_t usec)
@@ -121,6 +122,8 @@ void TmThreadDisablePacketThreads(void);
 void TmThreadDisableReceiveThreads(void);
 
 uint32_t TmThreadCountThreadsByTmmFlags(uint8_t flags);
+
+TmEcode TmThreadWaitOnThreadRunning(void);
 
 static inline void TmThreadsCleanDecodePQ(PacketQueueNoLock *pq)
 {

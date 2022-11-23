@@ -49,7 +49,6 @@
 #include "flow-var.h"
 
 #include "util-debug.h"
-#include "util-unittest.h"
 #include "util-spm.h"
 #include "util-print.h"
 #include "util-profiling.h"
@@ -139,10 +138,9 @@ typedef struct PrefilterMpmMQTTUnsubscribeTopic {
  *  \param txv tx to inspect
  *  \param pectx inspection context
  */
-static void PrefilterTxMQTTUnsubscribeTopic(DetectEngineThreadCtx *det_ctx,
-        const void *pectx,
-        Packet *p, Flow *f, void *txv,
-        const uint64_t idx, const uint8_t flags)
+static void PrefilterTxMQTTUnsubscribeTopic(DetectEngineThreadCtx *det_ctx, const void *pectx,
+        Packet *p, Flow *f, void *txv, const uint64_t idx, const AppLayerTxData *_txd,
+        const uint8_t flags)
 {
     SCEnter();
 

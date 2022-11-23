@@ -34,6 +34,7 @@
 #define SC_PCAP_DONT_INCLUDE_PCAP_H 1
 #include "suricata-common.h"
 #include "suricata.h"
+#include "packet.h"
 #include "decode.h"
 #include "packet-queue.h"
 #include "threads.h"
@@ -59,6 +60,7 @@
 #include "runmodes.h"
 #include "flow-storage.h"
 #include "util-validate.h"
+#include "action-globals.h"
 
 #ifdef HAVE_AF_PACKET
 
@@ -71,7 +73,6 @@
 #endif
 
 #ifdef HAVE_PACKET_EBPF
-#include "util-ebpf.h"
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #endif
@@ -559,7 +560,6 @@ static void AFPPeersListReachedInc(void)
         return;
 
     if ((SC_ATOMIC_ADD(peerslist.reached, 1) + 1) == peerslist.turn) {
-        SCLogInfo("All AFP capture threads are running.");
         (void)SC_ATOMIC_SET(peerslist.reached, 0);
         /* Set turn to 0 to skip syncrhonization when ReceiveAFPLoop is
          * restarted.
@@ -649,7 +649,7 @@ static void AFPWritePacket(Packet *p, int version)
     int socket;
 
     if (p->afp_v.copy_mode == AFP_COPY_MODE_IPS) {
-        if (PacketTestAction(p, ACTION_DROP)) {
+        if (PacketCheckAction(p, ACTION_DROP)) {
             return;
         }
     }
@@ -948,7 +948,7 @@ static inline int AFPParsePacketV3(AFPThreadVars *ptv, struct tpacket_block_desc
             (ppd->tp_status & TP_STATUS_VLAN_VALID || ppd->hv1.tp_vlan_tci)) {
         p->vlan_id[0] = ppd->hv1.tp_vlan_tci & 0x0fff;
         p->vlan_idx = 1;
-        p->afp_v.vlan_tci = ppd->hv1.tp_vlan_tci;
+        p->afp_v.vlan_tci = (uint16_t)ppd->hv1.tp_vlan_tci;
     }
 
     (void)PacketSetData(p, (unsigned char *)ppd + ppd->tp_mac, ppd->tp_snaplen);
@@ -1116,7 +1116,7 @@ static void AFPCloseSocket(AFPThreadVars *ptv)
     }
 }
 
-static void AFPSwitchState(AFPThreadVars *ptv, int state)
+static void AFPSwitchState(AFPThreadVars *ptv, uint8_t state)
 {
     ptv->afp_state = state;
     ptv->down_count = 0;
@@ -1337,6 +1337,10 @@ TmEcode ReceiveAFPLoop(ThreadVars *tv, void *data, void *slot)
 
     fds.fd = ptv->socket;
     fds.events = POLLIN;
+
+    // Indicate that the thread is actually running its application level code (i.e., it can poll
+    // packets)
+    TmThreadsSetFlag(tv, THV_RUNNING);
 
     while (1) {
         /* Start by checking the state of our interface */
@@ -2069,7 +2073,10 @@ TmEcode AFPSetBPFFilter(AFPThreadVars *ptv)
         return TM_ECODE_FAILED;
     }
 
-    fcode.len    = filter.bf_len;
+    if (filter.bf_len > USHRT_MAX) {
+        return TM_ECODE_FAILED;
+    }
+    fcode.len = (unsigned short)filter.bf_len;
     fcode.filter = (struct sock_filter*)filter.bf_insns;
 
     rc = setsockopt(ptv->socket, SOL_SOCKET, SO_ATTACH_FILTER, &fcode, sizeof(fcode));

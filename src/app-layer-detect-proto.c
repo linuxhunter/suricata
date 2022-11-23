@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2014 Open Information Security Foundation
+/* Copyright (C) 2007-2021 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -62,7 +62,6 @@
 #include "util-memcmp.h"
 #include "util-spm.h"
 #include "util-debug.h"
-#include "util-validate.h"
 
 #include "runmodes.h"
 
@@ -920,6 +919,8 @@ static void AppLayerProtoDetectPrintProbingParsers(AppLayerProtoDetectProbingPar
                         printf("            alproto: ALPROTO_TEMPLATE\n");
                     else if (pp_pe->alproto == ALPROTO_DNP3)
                         printf("            alproto: ALPROTO_DNP3\n");
+                    else if (pp_pe->alproto == ALPROTO_BITTORRENT_DHT)
+                        printf("            alproto: ALPROTO_BITTORRENT_DHT\n");
                     else
                         printf("impossible\n");
 
@@ -1003,6 +1004,8 @@ static void AppLayerProtoDetectPrintProbingParsers(AppLayerProtoDetectProbingPar
                     printf("            alproto: ALPROTO_TEMPLATE\n");
                 else if (pp_pe->alproto == ALPROTO_DNP3)
                     printf("            alproto: ALPROTO_DNP3\n");
+                else if (pp_pe->alproto == ALPROTO_BITTORRENT_DHT)
+                    printf("            alproto: ALPROTO_BITTORRENT_DHT\n");
                 else
                     printf("impossible\n");
 
@@ -2266,6 +2269,7 @@ void AppLayerRegisterExpectationProto(uint8_t proto, AppProto alproto)
 #ifdef UNITTESTS
 
 #include "app-layer-htp.h"
+#include "detect-engine-alert.h"
 
 static AppLayerProtoDetectCtx alpd_ctx_ut;
 

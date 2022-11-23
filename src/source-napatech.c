@@ -26,6 +26,8 @@
  *
  */
 #include "suricata-common.h"
+#include "decode.h"
+#include "packet.h"
 #include "suricata.h"
 #include "threadvars.h"
 #include "util-datalink.h"
@@ -582,7 +584,7 @@ static int ProgramFlow(Packet *p, int is_inline)
     flow_match.gfi = 1; /* Generate FlowInfo records */
     flow_match.tau = 1; /* tcp automatic unlearn */
 
-    if (PacketTestAction(p, ACTION_DROP)) {
+    if (PacketCheckAction(p, ACTION_DROP)) {
         flow_match.keySetId = NAPATECH_FLOWTYPE_DROP;
     } else {
         if (is_inline) {
@@ -684,7 +686,7 @@ static void NapatechReleasePacket(struct Packet_ *p)
      * before releasing the Napatech buffer back to NTService.
      */
 #ifdef NAPATECH_ENABLE_BYPASS
-    if (is_inline && PacketTestAction(p, ACTION_DROP)) {
+    if (is_inline && PacketCheckAction(p, ACTION_DROP)) {
         p->ntpv.dyn3->wireLength = 0;
     }
 
@@ -908,6 +910,10 @@ TmEcode NapatechPacketLoop(ThreadVars *tv, void *data, void *slot)
     }
     TmSlot *s = (TmSlot *) slot;
     ntv->slot = s->slot_next;
+
+    // Indicate that the thread is actually running its application level code (i.e., it can poll
+    // packets)
+    TmThreadsSetFlag(tv, THV_RUNNING);
 
     while (!(suricata_ctl_flags & SURICATA_STOP)) {
         /* make sure we have at least one packet in the packet pool, to prevent

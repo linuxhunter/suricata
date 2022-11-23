@@ -1,4 +1,4 @@
-/* Copyright (C) 2017 Open Information Security Foundation
+/* Copyright (C) 2017-2021 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -139,6 +139,9 @@ pub struct NFSTransactionFile {
     /// file tracker for a single file. Boxed so that we don't use
     /// as much space if we're not a file tx.
     pub file_tracker: FileTransferTracker,
+
+    /// storage for the actual file
+    pub files: Files,
 }
 
 impl NFSTransactionFile {
@@ -147,6 +150,21 @@ impl NFSTransactionFile {
             file_tracker: FileTransferTracker::new(),
             ..Default::default()
         }
+    }
+    pub fn update_file_flags(&mut self, flow_file_flags: u16) {
+        self.files.flags_ts = unsafe { FileFlowFlagsToFlags(flow_file_flags, STREAM_TOSERVER) | FILE_USE_DETECT };
+        self.files.flags_tc = unsafe { FileFlowFlagsToFlags(flow_file_flags, STREAM_TOCLIENT) | FILE_USE_DETECT };
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn rs_nfs_gettxfiles(tx_ptr: *mut std::ffi::c_void, direction: u8) -> * mut FileContainer {
+    let tx = cast_pointer!(tx_ptr, NFSTransaction);
+    if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
+        let (files, _flags) = tdf.files.get(direction.into());
+        files
+    } else {
+        std::ptr::null_mut()
     }
 }
 
@@ -268,7 +286,7 @@ impl NFSRequestXidMap {
 
 /// little wrapper around the FileTransferTracker::new_chunk method
 pub fn filetracker_newchunk(ft: &mut FileTransferTracker, files: &mut FileContainer,
-        flags: u16, name: &Vec<u8>, data: &[u8],
+        flags: u16, name: &[u8], data: &[u8],
         chunk_offset: u64, chunk_size: u32, fill_bytes: u8, is_last: bool, xid: &u32)
 {
     match unsafe {SURICATA_NFS_FILE_CONFIG} {
@@ -281,6 +299,8 @@ pub fn filetracker_newchunk(ft: &mut FileTransferTracker, files: &mut FileContai
 
 #[derive(Debug)]
 pub struct NFSState {
+    state_data: AppLayerStateData,
+
     /// map xid to procedure so replies can lookup the procedure
     pub requestmap: HashMap<u32, NFSRequestXidMap>,
 
@@ -289,8 +309,6 @@ pub struct NFSState {
 
     /// transactions list
     pub transactions: Vec<NFSTransaction>,
-
-    pub files: Files,
 
     /// partial record tracking
     pub ts_chunk_xid: u32,
@@ -338,10 +356,10 @@ impl NFSState {
     /// Allocation function for a new TLS parser instance
     pub fn new() -> NFSState {
         NFSState {
+            state_data: AppLayerStateData::new(),
             requestmap:HashMap::new(),
             namemap:HashMap::new(),
             transactions: Vec::new(),
-            files:Files::default(),
             ts_chunk_xid:0,
             tc_chunk_xid:0,
             ts_chunk_left:0,
@@ -448,7 +466,7 @@ impl NFSState {
                 mytx.response_done = true;
                 mytx.rpc_response_status = rpc_status;
                 mytx.nfs_response_status = nfs_status;
-                if mytx.file_handle.len() == 0 && resp_handle.len() > 0 {
+                if mytx.file_handle.is_empty() && !resp_handle.is_empty() {
                     mytx.file_handle = resp_handle.to_vec();
                 }
 
@@ -562,7 +580,7 @@ impl NFSState {
                     if self.ts > f.post_gap_ts {
                         tx.request_done = true;
                         tx.response_done = true;
-                        let (files, flags) = self.files.get(tx.file_tx_direction);
+                        let (files, flags) = f.files.get(tx.file_tx_direction);
                         f.file_tracker.trunc(files, flags);
                     } else {
                         post_gap_txs = true;
@@ -667,8 +685,8 @@ impl NFSState {
         }
     }
 
-    pub fn new_file_tx(&mut self, file_handle: &Vec<u8>, file_name: &Vec<u8>, direction: Direction)
-        -> (&mut NFSTransaction, &mut FileContainer, u16)
+    pub fn new_file_tx(&mut self, file_handle: &[u8], file_name: &[u8], direction: Direction)
+        -> &mut NFSTransaction
     {
         let mut tx = self.new_tx();
         tx.file_name = file_name.to_vec();
@@ -679,28 +697,33 @@ impl NFSState {
         tx.type_data = Some(NFSTransactionTypeData::FILE(NFSTransactionFile::new()));
         if let Some(NFSTransactionTypeData::FILE(ref mut d)) = tx.type_data {
             d.file_tracker.tx_id = tx.id - 1;
+            tx.tx_data.update_file_flags(self.state_data.file_flags);
+            d.update_file_flags(tx.tx_data.file_flags);
         }
         tx.tx_data.init_files_opened();
+        tx.tx_data.file_tx = if direction == Direction::ToServer { STREAM_TOSERVER } else { STREAM_TOCLIENT }; // TODO direction to flag func?
         SCLogDebug!("new_file_tx: TX FILE created: ID {} NAME {}",
                 tx.id, String::from_utf8_lossy(file_name));
         self.transactions.push(tx);
         let tx_ref = self.transactions.last_mut();
-        let (files, flags) = self.files.get(direction);
-        return (tx_ref.unwrap(), files, flags)
+        return tx_ref.unwrap();
     }
 
-    pub fn get_file_tx_by_handle(&mut self, file_handle: &Vec<u8>, direction: Direction)
-        -> Option<(&mut NFSTransaction, &mut FileContainer, u16)>
+    pub fn get_file_tx_by_handle(&mut self, file_handle: &[u8], direction: Direction)
+        -> Option<&mut NFSTransaction>
     {
         let fh = file_handle.to_vec();
         for tx in &mut self.transactions {
-            if tx.is_file_tx && !tx.is_file_closed &&
-                direction == tx.file_tx_direction &&
-                tx.file_handle == fh
-            {
-                SCLogDebug!("Found NFS file TX with ID {} XID {:04X}", tx.id, tx.xid);
-                let (files, flags) = self.files.get(direction);
-                return Some((tx, files, flags));
+            if let Some(NFSTransactionTypeData::FILE(ref mut d)) = tx.type_data {
+                if tx.is_file_tx && !tx.is_file_closed &&
+                    direction == tx.file_tx_direction &&
+                        tx.file_handle == fh
+                {
+                    tx.tx_data.update_file_flags(self.state_data.file_flags);
+                    d.update_file_flags(tx.tx_data.file_flags);
+                    SCLogDebug!("Found NFS file TX with ID {} XID {:04X}", tx.id, tx.xid);
+                    return Some(tx);
+                }
             }
         }
         SCLogDebug!("Failed to find NFS TX with handle {:?}", file_handle);
@@ -720,7 +743,7 @@ impl NFSState {
         }
 
         // for now assume that stable FILE_SYNC flags means a single chunk
-        let is_last = if w.stable == 2 { true } else { false };
+        let is_last = w.stable == 2;
         let file_handle = w.handle.value.to_vec();
         let file_name = if let Some(name) = self.namemap.get(w.handle.value) {
             SCLogDebug!("WRITE name {:?}", name);
@@ -731,8 +754,9 @@ impl NFSState {
         };
 
         let found = match self.get_file_tx_by_handle(&file_handle, Direction::ToServer) {
-            Some((tx, files, flags)) => {
+            Some(tx) => {
                 if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
+                    let (files, flags) = tdf.files.get(Direction::ToServer);
                     filetracker_newchunk(&mut tdf.file_tracker, files, flags,
                             &file_name, w.file_data, w.offset,
                             w.file_len, fill_bytes as u8, is_last, &r.hdr.xid);
@@ -751,8 +775,9 @@ impl NFSState {
             None => { false },
         };
         if !found {
-            let (tx, files, flags) = self.new_file_tx(&file_handle, &file_name, Direction::ToServer);
+            let tx = self.new_file_tx(&file_handle, &file_name, Direction::ToServer);
             if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
+                let (files, flags) = tdf.files.get(Direction::ToServer);
                 filetracker_newchunk(&mut tdf.file_tracker, files, flags,
                         &file_name, w.file_data, w.offset,
                         w.file_len, fill_bytes as u8, is_last, &r.hdr.xid);
@@ -904,8 +929,9 @@ impl NFSState {
         let ssn_gap = self.ts_ssn_gap | self.tc_ssn_gap;
         // get the tx and update it
         let consumed = match self.get_file_tx_by_handle(&file_handle, direction) {
-            Some((tx, files, flags)) => {
+            Some(tx) => {
                 if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
+                    let (files, flags) = tdf.files.get(direction);
                     if ssn_gap {
                         let queued_data = tdf.file_tracker.get_queued_size();
                         if queued_data > 2000000 { // TODO should probably be configurable
@@ -1006,9 +1032,10 @@ impl NFSState {
         SCLogDebug!("partial data? {}", is_partial);
 
         let found = match self.get_file_tx_by_handle(&file_handle, Direction::ToClient) {
-            Some((tx, files, flags)) => {
+            Some(tx) => {
                 SCLogDebug!("updated TX {:?}", tx);
                 if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
+                    let (files, flags) = tdf.files.get(Direction::ToClient);
                     filetracker_newchunk(&mut tdf.file_tracker, files, flags,
                             &file_name, reply.data, chunk_offset,
                             reply.count, fill_bytes as u8, is_last, &r.hdr.xid);
@@ -1035,8 +1062,9 @@ impl NFSState {
             None => { false },
         };
         if !found {
-            let (tx, files, flags) = self.new_file_tx(&file_handle, &file_name, Direction::ToClient);
+            let tx = self.new_file_tx(&file_handle, &file_name, Direction::ToClient);
             if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
+                let (files, flags) = tdf.files.get(Direction::ToClient);
                 filetracker_newchunk(&mut tdf.file_tracker, files, flags,
                         &file_name, reply.data, chunk_offset,
                         reply.count, fill_bytes as u8, is_last, &r.hdr.xid);
@@ -1134,7 +1162,7 @@ impl NFSState {
                     Ok((_rem, ref hdr)) => {
                         // we got here because rec_size > input, so we should never have
                         // remaining data
-                        debug_validate_bug_on!(_rem.len() != 0);
+                        debug_validate_bug_on!(!_rem.is_empty());
 
                         match parse_nfs3_request_write(hdr.prog_data, false) {
                             Ok((_, ref w)) => {
@@ -1184,14 +1212,14 @@ impl NFSState {
             }
             cur_i = &cur_i[consumed as usize..];
         }
-        if cur_i.len() == 0 {
+        if cur_i.is_empty() {
             return AppLayerResult::ok();
         }
         if self.ts_gap {
             SCLogDebug!("TS trying to catch up after GAP (input {})", cur_i.len());
 
             let mut _cnt = 0;
-            while cur_i.len() > 0 {
+            while !cur_i.is_empty() {
                 _cnt += 1;
                 match nfs_probe(cur_i, Direction::ToServer) {
                     1 => {
@@ -1206,7 +1234,7 @@ impl NFSState {
                     },
                     -1 => {
                         cur_i = &cur_i[1..];
-                        if cur_i.len() == 0 {
+                        if cur_i.is_empty() {
                             SCLogDebug!("all post-GAP data in this chunk was bad. Looped {} times.", _cnt);
                         }
                     },
@@ -1218,7 +1246,7 @@ impl NFSState {
             SCLogDebug!("TS GAP handling done (input {})", cur_i.len());
         }
 
-        while cur_i.len() > 0 { // min record size
+        while !cur_i.is_empty() { // min record size
             self.add_rpc_tcp_ts_pdu(flow, stream_slice, cur_i, cur_i.len() as i64);
             match parse_rpc_request_partial(cur_i) {
                 Ok((_, ref rpc_phdr)) => {
@@ -1298,7 +1326,7 @@ impl NFSState {
                     Ok((_rem, ref hdr)) => {
                         // we got here because rec_size > input, so we should never have
                         // remaining data
-                        debug_validate_bug_on!(_rem.len() != 0);
+                        debug_validate_bug_on!(!_rem.is_empty());
 
                         match parse_nfs3_reply_read(hdr.prog_data, false) {
                             Ok((_, ref r)) => {
@@ -1348,14 +1376,14 @@ impl NFSState {
             }
             cur_i = &cur_i[consumed as usize..];
         }
-        if cur_i.len() == 0 {
+        if cur_i.is_empty() {
             return AppLayerResult::ok();
         }
         if self.tc_gap {
             SCLogDebug!("TC trying to catch up after GAP (input {})", cur_i.len());
 
             let mut _cnt = 0;
-            while cur_i.len() > 0 {
+            while !cur_i.is_empty() {
                 _cnt += 1;
                 match nfs_probe(cur_i, Direction::ToClient) {
                     1 => {
@@ -1370,7 +1398,7 @@ impl NFSState {
                     },
                     -1 => {
                         cur_i = &cur_i[1..];
-                        if cur_i.len() == 0 {
+                        if cur_i.is_empty() {
                             SCLogDebug!("all post-GAP data in this chunk was bad. Looped {} times.", _cnt);
                         }
                     },
@@ -1382,7 +1410,7 @@ impl NFSState {
             SCLogDebug!("TC GAP handling done (input {})", cur_i.len());
         }
 
-        while cur_i.len() > 0 {
+        while !cur_i.is_empty() {
             self.add_rpc_tcp_tc_pdu(flow, stream_slice, cur_i, cur_i.len() as i64);
             match parse_rpc_packet_header(cur_i) {
                 Ok((_, ref rpc_phdr)) => {
@@ -1445,7 +1473,7 @@ impl NFSState {
         let input = stream_slice.as_slice();
         SCLogDebug!("parse_udp_ts ({})", input.len());
         self.add_rpc_udp_ts_pdu(flow, stream_slice, input, input.len() as i64);
-        if input.len() > 0 {
+        if !input.is_empty() {
             match parse_rpc_udp_request(input) {
                 Ok((_, ref rpc_record)) => {
                     self.is_udp = true;
@@ -1477,7 +1505,7 @@ impl NFSState {
         let input = stream_slice.as_slice();
         SCLogDebug!("parse_udp_tc ({})", input.len());
         self.add_rpc_udp_tc_pdu(flow, stream_slice, input, input.len() as i64);
-        if input.len() > 0 {
+        if !input.is_empty() {
             match parse_rpc_udp_reply(input) {
                 Ok((_, ref rpc_record)) => {
                     self.is_udp = true;
@@ -1493,23 +1521,6 @@ impl NFSState {
             }
         }
         AppLayerResult::ok()
-    }
-
-    fn getfiles(&mut self, direction: Direction) -> * mut FileContainer {
-        //SCLogDebug!("direction: {:?}", direction);
-        if direction == Direction::ToClient {
-            &mut self.files.files_tc as *mut FileContainer
-        } else {
-            &mut self.files.files_ts as *mut FileContainer
-        }
-    }
-    fn setfileflags(&mut self, direction: Direction, flags: u16) {
-        SCLogDebug!("direction: {:?}, flags: {}", direction, flags);
-        if direction == Direction::ToClient {
-            self.files.flags_tc = flags;
-        } else {
-            self.files.flags_ts = flags;
-        }
     }
 }
 
@@ -1542,8 +1553,6 @@ pub unsafe extern "C" fn rs_nfs_parse_request(flow: *const Flow,
 {
     let state = cast_pointer!(state, NFSState);
     let flow = cast_pointer!(flow, Flow);
-    let file_flags = FileFlowToFlags(flow, Direction::ToServer.into());
-    rs_nfs_setfileflags(Direction::ToServer.into(), state, file_flags);
 
     if stream_slice.is_gap() {
         return rs_nfs_parse_request_tcp_gap(state, stream_slice.gap_size());
@@ -1560,7 +1569,7 @@ pub extern "C" fn rs_nfs_parse_request_tcp_gap(
                                         input_len: u32)
                                         -> AppLayerResult
 {
-    state.parse_tcp_data_ts_gap(input_len as u32)
+    state.parse_tcp_data_ts_gap(input_len)
 }
 
 #[no_mangle]
@@ -1573,8 +1582,6 @@ pub unsafe extern "C" fn rs_nfs_parse_response(flow: *const Flow,
 {
     let state = cast_pointer!(state, NFSState);
     let flow = cast_pointer!(flow, Flow);
-    let file_flags = FileFlowToFlags(flow, Direction::ToClient.into());
-    rs_nfs_setfileflags(Direction::ToClient.into(), state, file_flags);
 
     if stream_slice.is_gap() {
         return rs_nfs_parse_response_tcp_gap(state, stream_slice.gap_size());
@@ -1591,7 +1598,7 @@ pub extern "C" fn rs_nfs_parse_response_tcp_gap(
                                         input_len: u32)
                                         -> AppLayerResult
 {
-    state.parse_tcp_data_tc_gap(input_len as u32)
+    state.parse_tcp_data_tc_gap(input_len)
 }
 
 /// C binding to parse an NFS/UDP request. Returns 1 on success, -1 on failure.
@@ -1604,8 +1611,6 @@ pub unsafe extern "C" fn rs_nfs_parse_request_udp(f: *const Flow,
                                        ) -> AppLayerResult
 {
     let state = cast_pointer!(state, NFSState);
-    let file_flags = FileFlowToFlags(f, Direction::ToServer.into());
-    rs_nfs_setfileflags(Direction::ToServer.into(), state, file_flags);
 
     SCLogDebug!("parsing {} bytes of request data", stream_slice.len());
     state.parse_udp_ts(f, &stream_slice)
@@ -1620,8 +1625,6 @@ pub unsafe extern "C" fn rs_nfs_parse_response_udp(f: *const Flow,
                                         ) -> AppLayerResult
 {
     let state = cast_pointer!(state, NFSState);
-    let file_flags = FileFlowToFlags(f, Direction::ToClient.into());
-    rs_nfs_setfileflags(Direction::ToClient.into(), state, file_flags);
     SCLogDebug!("parsing {} bytes of response data", stream_slice.len());
     state.parse_udp_tc(f, &stream_slice)
 }
@@ -1666,13 +1669,13 @@ pub unsafe extern "C" fn rs_nfs_tx_get_alstate_progress(tx: *mut std::os::raw::c
 {
     let tx = cast_pointer!(tx, NFSTransaction);
     if direction == Direction::ToServer.into() && tx.request_done {
-        //SCLogNotice!("TOSERVER progress 1");
+        SCLogDebug!("TOSERVER progress 1");
         return 1;
     } else if direction == Direction::ToClient.into() && tx.response_done {
-        //SCLogNotice!("TOCLIENT progress 1");
+        SCLogDebug!("TOCLIENT progress 1");
         return 1;
     } else {
-        //SCLogNotice!("{} progress 0", direction);
+        SCLogDebug!("{} progress 0", direction);
         return 0;
     }
 }
@@ -1686,6 +1689,8 @@ pub unsafe extern "C" fn rs_nfs_get_tx_data(
     return &mut tx.tx_data;
 }
 
+export_state_data_get!(rs_nfs_get_state_data, NFSState);
+
 /// return procedure(s) in the tx. At 0 return the main proc,
 /// otherwise get procs from the 'file_additional_procs'.
 /// Keep calling until 0 is returned.
@@ -1696,7 +1701,7 @@ pub unsafe extern "C" fn rs_nfs_tx_get_procedures(tx: &mut NFSTransaction,
                                            -> u8
 {
     if i == 0 {
-        *procedure = tx.procedure as u32;
+        *procedure = tx.procedure;
         return 1;
     }
 
@@ -1710,7 +1715,7 @@ pub unsafe extern "C" fn rs_nfs_tx_get_procedures(tx: &mut NFSTransaction,
         let idx = i as usize - 1;
         if idx < tdf.file_additional_procs.len() {
             let p = tdf.file_additional_procs[idx];
-            *procedure = p as u32;
+            *procedure = p;
             return 1;
         }
     }
@@ -1929,22 +1934,8 @@ pub unsafe extern "C" fn rs_nfs_probe_udp_tc(_f: *const Flow,
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn rs_nfs_getfiles(ptr: *mut std::ffi::c_void, direction: u8) -> * mut FileContainer {
-    if ptr.is_null() { panic!("NULL ptr"); };
-    let parser = cast_pointer!(ptr, NFSState);
-    parser.getfiles(direction.into())
-}
-#[no_mangle]
-pub unsafe extern "C" fn rs_nfs_setfileflags(direction: u8, ptr: *mut NFSState, flags: u16) {
-    if ptr.is_null() { panic!("NULL ptr"); };
-    let parser = &mut *ptr;
-    SCLogDebug!("direction {} flags {}", direction, flags);
-    parser.setfileflags(direction.into(), flags)
-}
-
 // Parser name as a C style string.
-const PARSER_NAME: &'static [u8] = b"nfs\0";
+const PARSER_NAME: &[u8] = b"nfs\0";
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_nfs_register_parser() {
@@ -1971,9 +1962,10 @@ pub unsafe extern "C" fn rs_nfs_register_parser() {
         get_eventinfo_byid : Some(NFSEvent::get_event_info_by_id),
         localstorage_new: None,
         localstorage_free: None,
-        get_files: Some(rs_nfs_getfiles),
+        get_tx_files: Some(rs_nfs_gettxfiles),
         get_tx_iterator: Some(applayer::state_get_tx_iterator::<NFSState, NFSTransaction>),
         get_tx_data: rs_nfs_get_tx_data,
+        get_state_data: rs_nfs_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_ACCEPT_GAPS,
         truncate: None,
@@ -1992,21 +1984,21 @@ pub unsafe extern "C" fn rs_nfs_register_parser() {
         ALPROTO_NFS = alproto;
 
         let midstream = conf_get_bool("stream.midstream");
-        if midstream == true {
-            if AppLayerProtoDetectPPParseConfPorts(ip_proto_str.as_ptr(), IPPROTO_TCP as u8,
+        if midstream {
+            if AppLayerProtoDetectPPParseConfPorts(ip_proto_str.as_ptr(), IPPROTO_TCP,
                     parser.name, ALPROTO_NFS, 0, NFS_MIN_FRAME_LEN,
                     rs_nfs_probe_ms, rs_nfs_probe_ms) == 0 {
                 SCLogDebug!("No NFSTCP app-layer configuration, enabling NFSTCP
                             detection TCP detection on port {:?}.",
                             default_port);
                 /* register 'midstream' probing parsers if midstream is enabled. */
-                AppLayerProtoDetectPPRegister(IPPROTO_TCP as u8,
+                AppLayerProtoDetectPPRegister(IPPROTO_TCP,
                     default_port.as_ptr(), ALPROTO_NFS, 0,
                     NFS_MIN_FRAME_LEN, Direction::ToServer.into(),
                     rs_nfs_probe_ms, rs_nfs_probe_ms);
             }
         } else {
-            AppLayerProtoDetectPPRegister(IPPROTO_TCP as u8,
+            AppLayerProtoDetectPPRegister(IPPROTO_TCP,
                 default_port.as_ptr(), ALPROTO_NFS, 0,
                 NFS_MIN_FRAME_LEN, Direction::ToServer.into(),
                 rs_nfs_probe, rs_nfs_probe);
@@ -2049,9 +2041,10 @@ pub unsafe extern "C" fn rs_nfs_udp_register_parser() {
         get_eventinfo_byid : Some(NFSEvent::get_event_info_by_id),
         localstorage_new: None,
         localstorage_free: None,
-        get_files: Some(rs_nfs_getfiles),
+        get_tx_files: Some(rs_nfs_gettxfiles),
         get_tx_iterator: Some(applayer::state_get_tx_iterator::<NFSState, NFSTransaction>),
         get_tx_data: rs_nfs_get_tx_data,
+        get_state_data: rs_nfs_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_UNIDIR_TXS,
         truncate: None,
@@ -2069,13 +2062,13 @@ pub unsafe extern "C" fn rs_nfs_udp_register_parser() {
         let alproto = AppLayerRegisterProtocolDetection(&parser, 1);
         ALPROTO_NFS = alproto;
 
-        if AppLayerProtoDetectPPParseConfPorts(ip_proto_str.as_ptr(), IPPROTO_UDP as u8,
+        if AppLayerProtoDetectPPParseConfPorts(ip_proto_str.as_ptr(), IPPROTO_UDP,
                 parser.name, ALPROTO_NFS, 0, NFS_MIN_FRAME_LEN,
                 rs_nfs_probe_udp_ts, rs_nfs_probe_udp_tc) == 0 {
             SCLogDebug!("No NFSUDP app-layer configuration, enabling NFSUDP
                         detection UDP detection on port {:?}.",
                         default_port);
-            AppLayerProtoDetectPPRegister(IPPROTO_UDP as u8,
+            AppLayerProtoDetectPPRegister(IPPROTO_UDP,
                 default_port.as_ptr(), ALPROTO_NFS, 0,
                 NFS_MIN_FRAME_LEN, Direction::ToServer.into(),
                 rs_nfs_probe_udp_ts, rs_nfs_probe_udp_tc);
@@ -2099,4 +2092,3 @@ pub unsafe extern "C" fn rs_nfs_udp_register_parser() {
         SCLogDebug!("Protocol detector and parser disabled for nfs.");
     }
 }
-

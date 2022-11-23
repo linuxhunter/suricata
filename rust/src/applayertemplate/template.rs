@@ -20,7 +20,7 @@ use std::collections::VecDeque;
 use crate::core::{ALPROTO_UNKNOWN, AppProto, Flow, IPPROTO_TCP};
 use crate::applayer::{self, *};
 use std::ffi::CString;
-use nom;
+use nom7 as nom;
 use super::parser;
 
 static mut ALPROTO_TEMPLATE: AppProto = ALPROTO_UNKNOWN;
@@ -54,6 +54,7 @@ impl Transaction for TemplateTransaction {
 }
 
 pub struct TemplateState {
+    state_data: AppLayerStateData,
     tx_id: u64,
     transactions: VecDeque<TemplateTransaction>,
     request_gap: bool,
@@ -73,6 +74,7 @@ impl State<TemplateTransaction> for TemplateState {
 impl TemplateState {
     pub fn new() -> Self {
         Self {
+            state_data: AppLayerStateData::new(),
             tx_id: 0,
             transactions: VecDeque::new(),
             request_gap: false,
@@ -125,7 +127,7 @@ impl TemplateState {
 
     fn parse_request(&mut self, input: &[u8]) -> AppLayerResult {
         // We're not interested in empty requests.
-        if input.len() == 0 {
+        if input.is_empty() {
             return AppLayerResult::ok();
         }
 
@@ -143,7 +145,7 @@ impl TemplateState {
         }
 
         let mut start = input;
-        while start.len() > 0 {
+        while !start.is_empty() {
             match parser::parse_message(start) {
                 Ok((rem, request)) => {
                     start = rem;
@@ -173,7 +175,7 @@ impl TemplateState {
 
     fn parse_response(&mut self, input: &[u8]) -> AppLayerResult {
         // We're not interested in empty responses.
-        if input.len() == 0 {
+        if input.is_empty() {
             return AppLayerResult::ok();
         }
 
@@ -189,7 +191,7 @@ impl TemplateState {
             self.response_gap = false;
         }
         let mut start = input;
-        while start.len() > 0 {
+        while !start.is_empty() {
             match parser::parse_message(start) {
                 Ok((rem, response)) => {
                     start = rem;
@@ -293,11 +295,7 @@ pub unsafe extern "C" fn rs_template_parse_request(
     stream_slice: StreamSlice,
     _data: *const std::os::raw::c_void
 ) -> AppLayerResult {
-    let eof = if AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TS) > 0 {
-        true
-    } else {
-        false
-    };
+    let eof = AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TS) > 0;
 
     if eof {
         // If needed, handle EOF, or pass it into the parser.
@@ -325,11 +323,7 @@ pub unsafe extern "C" fn rs_template_parse_response(
     stream_slice: StreamSlice,
     _data: *const std::os::raw::c_void
 ) -> AppLayerResult {
-    let _eof = if AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TC) > 0 {
-        true
-    } else {
-        false
-    };
+    let _eof = AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TC) > 0;
     let state = cast_pointer!(state, TemplateState);
 
     if stream_slice.is_gap() {
@@ -394,7 +388,7 @@ pub unsafe extern "C" fn rs_template_get_request_buffer(
 {
     let tx = cast_pointer!(tx, TemplateTransaction);
     if let Some(ref request) = tx.request {
-        if request.len() > 0 {
+        if !request.is_empty() {
             *len = request.len() as u32;
             *buf = request.as_ptr();
             return 1;
@@ -413,7 +407,7 @@ pub unsafe extern "C" fn rs_template_get_response_buffer(
 {
     let tx = cast_pointer!(tx, TemplateTransaction);
     if let Some(ref response) = tx.response {
-        if response.len() > 0 {
+        if !response.is_empty() {
             *len = response.len() as u32;
             *buf = response.as_ptr();
             return 1;
@@ -423,9 +417,10 @@ pub unsafe extern "C" fn rs_template_get_response_buffer(
 }
 
 export_tx_data_get!(rs_template_get_tx_data, TemplateTransaction);
+export_state_data_get!(rs_template_get_state_data, TemplateState);
 
 // Parser name as a C style string.
-const PARSER_NAME: &'static [u8] = b"template-rust\0";
+const PARSER_NAME: &[u8] = b"template-rust\0";
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_template_register_parser() {
@@ -452,9 +447,10 @@ pub unsafe extern "C" fn rs_template_register_parser() {
         get_eventinfo_byid : Some(TemplateEvent::get_event_info_by_id),
         localstorage_new: None,
         localstorage_free: None,
-        get_files: None,
+        get_tx_files: None,
         get_tx_iterator: Some(applayer::state_get_tx_iterator::<TemplateState, TemplateTransaction>),
         get_tx_data: rs_template_get_tx_data,
+        get_state_data: rs_template_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_ACCEPT_GAPS,
         truncate: None,
