@@ -52,8 +52,6 @@ noinst_HEADERS = \
 	app-layer-snmp.h \
 	app-layer-ssh.h \
 	app-layer-ssl.h \
-	app-layer-template.h \
-	app-layer-template-rust.h \
 	app-layer-tftp.h \
 	autoconf.h \
 	build-info.h \
@@ -323,7 +321,6 @@ noinst_HEADERS = \
 	detect-tcp-seq.h \
 	detect-tcp-window.h \
 	detect-template2.h \
-	detect-template-buffer.h \
 	detect-template.h \
 	detect-template-rust-buffer.h \
 	detect-threshold.h \
@@ -436,7 +433,6 @@ noinst_HEADERS = \
 	output-json-snmp.h \
 	output-json-ssh.h \
 	output-json-stats.h \
-	output-json-template.h \
 	output-json-template-rust.h \
 	output-json-tftp.h \
 	output-json-tls.h \
@@ -455,6 +451,7 @@ noinst_HEADERS = \
 	respond-reject.h \
 	respond-reject-libnet11.h \
 	runmode-af-packet.h \
+	runmode-af-xdp.h \
 	runmode-dpdk.h \
 	runmode-erf-dag.h \
 	runmode-erf-file.h \
@@ -473,6 +470,7 @@ noinst_HEADERS = \
 	rust-context.h \
 	rust.h \
 	source-af-packet.h \
+	source-af-xdp.h \
 	source-dpdk.h \
 	source-erf-dag.h \
 	source-erf-file.h \
@@ -619,6 +617,7 @@ noinst_HEADERS = \
 	util-storage.h \
 	util-streaming-buffer.h \
 	util-syslog.h \
+	util-sysfs.h \
 	util-thash.h \
 	util-threshold-config.h \
 	util-time.h \
@@ -675,8 +674,6 @@ libsuricata_c_a_SOURCES = \
 	app-layer-snmp.c \
 	app-layer-ssh.c \
 	app-layer-ssl.c \
-	app-layer-template.c \
-	app-layer-template-rust.c \
 	app-layer-tftp.c \
 	conf.c \
 	conf-yaml-loader.c \
@@ -943,7 +940,6 @@ libsuricata_c_a_SOURCES = \
 	detect-tcp-seq.c \
 	detect-tcp-window.c \
 	detect-template2.c \
-	detect-template-buffer.c \
 	detect-template.c \
 	detect-template-rust-buffer.c \
 	detect-threshold.c \
@@ -1056,7 +1052,6 @@ libsuricata_c_a_SOURCES = \
 	output-json-snmp.c \
 	output-json-ssh.c \
 	output-json-stats.c \
-	output-json-template.c \
 	output-json-template-rust.c \
 	output-json-tftp.c \
 	output-json-tls.c \
@@ -1074,6 +1069,7 @@ libsuricata_c_a_SOURCES = \
 	respond-reject.c \
 	respond-reject-libnet11.c \
 	runmode-af-packet.c \
+	runmode-af-xdp.c \
 	runmode-dpdk.c \
 	runmode-erf-dag.c \
 	runmode-erf-file.c \
@@ -1091,6 +1087,7 @@ libsuricata_c_a_SOURCES = \
 	runmode-windivert.c \
 	rust-context.c \
 	source-af-packet.c \
+	source-af-xdp.c \
 	source-dpdk.c \
 	source-erf-dag.c \
 	source-erf-file.c \
@@ -1231,6 +1228,7 @@ libsuricata_c_a_SOURCES = \
 	util-strlcpyu.c \
 	util-strptime.c \
 	util-syslog.c \
+	util-sysfs.c \
 	util-thash.c \
 	util-threshold-config.c \
 	util-time.c \

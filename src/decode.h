@@ -78,6 +78,9 @@ enum PktSrcEnum {
 #ifdef HAVE_PF_RING_FLOW_OFFLOAD
 #include "source-pfring.h"
 #endif
+#ifdef HAVE_AF_XDP
+#include "source-af-xdp.h"
+#endif
 
 #include "decode-ethernet.h"
 #include "decode-gre.h"
@@ -498,6 +501,9 @@ typedef struct Packet_
 #ifdef HAVE_NAPATECH
         NapatechPacketVars ntpv;
 #endif
+#ifdef HAVE_AF_XDP
+        AFXDPPacketVars afxdp_v;
+#endif
         /* A chunk of memory that a plugin can use for its packet vars. */
         uint8_t plugin_v[PLUGIN_VAR_SIZE];
 
@@ -644,7 +650,6 @@ typedef struct Packet_
 } Packet;
 
 /** highest mtu of the interfaces we monitor */
-extern int g_default_mtu;
 #define DEFAULT_MTU 1500
 #define MINIMUM_MTU 68      /**< ipv4 minimum: rfc791 */
 
@@ -1142,8 +1147,9 @@ static inline void DecodeLinkLayer(ThreadVars *tv, DecodeThreadVars *dtv,
             DecodeCHDLC(tv, dtv, p, data, len);
             break;
         default:
-            SCLogError(SC_ERR_DATALINK_UNIMPLEMENTED, "datalink type "
-                    "%"PRId32" not yet supported", datalink);
+            SCLogError("datalink type "
+                       "%" PRId32 " not yet supported",
+                    datalink);
             break;
     }
 }

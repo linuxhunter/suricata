@@ -1,4 +1,4 @@
-/* Copyright (C) 2015 Open Information Security Foundation
+/* Copyright (C) 2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -18,12 +18,15 @@
 /**
  * \file
  *
- * \author FirstName LastName <name@domain>
+ * \author Richard McConnell <richard_mcconnell@rapid7.com>
  */
 
-#ifndef __OUTPUT_JSON_TEMPLATE_H__
-#define __OUTPUT_JSON_TEMPLATE_H__
+#ifndef __RUNMODE_AFXDP_H__
+#define __RUNMODE_AFXDP_H__
 
-void JsonTemplateLogRegister(void);
+int RunModeIdsAFXDPSingle(void);
+int RunModeIdsAFXDPWorkers(void);
+void RunModeIdsAFXDPRegister(void);
+const char *RunModeAFXDPGetDefaultMode(void);
 
-#endif /* __OUTPUT_JSON_TEMPLATE_H__ */
+#endif /* __RUNMODE_AFXDP_H__ */

@@ -728,10 +728,9 @@ impl DCERPCState {
         match parser::parse_dcerpc_bindack(input) {
             Ok((leftover_bytes, mut back)) => {
                 if let Some(ref mut bind) = self.bind {
-                    let mut uuid_internal_id = 0;
-                    for r in back.ctxitems.iter() {
+                    for (uuid_internal_id, r) in back.ctxitems.iter().enumerate() {
                         for mut uuid in bind.uuid_list.iter_mut() {
-                            if uuid.internal_id == uuid_internal_id {
+                            if uuid.internal_id == uuid_internal_id as u16 {
                                 uuid.result = r.ack_result;
                                 if uuid.result != 0 {
                                     break;
@@ -740,7 +739,6 @@ impl DCERPCState {
                                 SCLogDebug!("DCERPC BINDACK accepted UUID: {:?}", uuid);
                             }
                         }
-                        uuid_internal_id += 1;
                     }
                     self.bindack = Some(back);
                 }
@@ -759,7 +757,7 @@ impl DCERPCState {
         }
     }
 
-    pub fn handle_stub_data(&mut self, input: &[u8], input_len: u16, dir: Direction) -> u16 {
+    pub fn handle_stub_data(&mut self, input: &[u8], input_len: usize, dir: Direction) -> u16 {
         let retval;
         let hdrpfcflags = self.get_hdr_pfcflags().unwrap_or(0);
         let padleft = self.padleft;
@@ -837,19 +835,20 @@ impl DCERPCState {
     /// Return value:
     /// * Success: Number of bytes successfully parsed.
     /// * Failure: -1 in case fragment length defined by header mismatches the data.
-    pub fn handle_common_stub(&mut self, input: &[u8], bytes_consumed: u16, dir: Direction) -> i32 {
+    pub fn handle_common_stub(&mut self, input: &[u8], bytes_consumed: usize, dir: Direction) -> i32 {
         let fraglen = self.get_hdr_fraglen().unwrap_or(0);
-        if fraglen < bytes_consumed + DCERPC_HDR_LEN {
+        if (fraglen as usize) < bytes_consumed + (DCERPC_HDR_LEN as usize) {
             return -1;
         }
-        self.padleft = fraglen - DCERPC_HDR_LEN - bytes_consumed;
-        let mut input_left = input.len() as u16 - bytes_consumed;
+        // Above check makes sure padleft stays in u16 limits
+        self.padleft = fraglen - DCERPC_HDR_LEN - bytes_consumed as u16;
+        let mut input_left = input.len() - bytes_consumed;
         let mut parsed = bytes_consumed as i32;
         while input_left > 0 && parsed < fraglen as i32 {
             let retval = self.handle_stub_data(&input[parsed as usize..], input_left, dir);
-            if retval > 0 && retval <= input_left {
+            if retval > 0 && retval as usize <= input_left {
                 parsed += retval as i32;
-                input_left -= retval;
+                input_left -= <u16 as std::convert::Into<usize>>::into(retval);
             } else if input_left > 0 {
                 SCLogDebug!(
                     "Error parsing DCERPC {} stub data",
@@ -891,7 +890,7 @@ impl DCERPCState {
                 }
                 let parsed = self.handle_common_stub(
                     input,
-                    (input.len() - leftover_input.len()) as u16,
+                    input.len() - leftover_input.len(),
                     Direction::ToServer,
                 );
                 parsed
@@ -1091,12 +1090,13 @@ impl DCERPCState {
 }
 
 fn evaluate_stub_params(
-    input: &[u8], input_len: u16, hdrflags: u8, lenleft: u16,
+    input: &[u8], input_len: usize, hdrflags: u8, lenleft: u16,
     stub_data_buffer: &mut Vec<u8>,stub_data_buffer_reset: &mut bool,
 ) -> u16 {
     
     let fragtype = hdrflags & (PFC_FIRST_FRAG | PFC_LAST_FRAG);
-    let stub_len: u16 = cmp::min(lenleft, input_len);
+    // min of usize and u16 is a valid u16
+    let stub_len: u16 = cmp::min(lenleft as usize, input_len) as u16;
     if stub_len == 0 {
         return 0;
     }
@@ -1137,7 +1137,7 @@ pub unsafe extern "C" fn rs_dcerpc_parse_request(
 
     SCLogDebug!("Handling request: input_len {} flags {:x} EOF {}",
             stream_slice.len(), flags, flags & core::STREAM_EOF != 0);
-    if flags & core::STREAM_EOF != 0 && stream_slice.len() == 0 {
+    if flags & core::STREAM_EOF != 0 && stream_slice.is_empty() {
         return AppLayerResult::ok();
     }
     /* START with MIDSTREAM set: record might be starting the middle. */
@@ -1160,7 +1160,7 @@ pub unsafe extern "C" fn rs_dcerpc_parse_response(
     let state = cast_pointer!(state, DCERPCState);
     let flags = stream_slice.flags();
 
-    if flags & core::STREAM_EOF != 0 && stream_slice.len() == 0 {
+    if flags & core::STREAM_EOF != 0 && stream_slice.is_empty() {
         return AppLayerResult::ok();
     }
     /* START with MIDSTREAM set: record might be starting the middle. */

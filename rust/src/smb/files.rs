@@ -69,16 +69,13 @@ impl SMBState {
     {
         let mut tx = self.new_tx();
         tx.type_data = Some(SMBTransactionTypeData::FILE(SMBTransactionFile::new()));
-        match tx.type_data {
-            Some(SMBTransactionTypeData::FILE(ref mut d)) => {
-                d.direction = direction;
-                d.fuid = fuid.to_vec();
-                d.file_name = file_name.to_vec();
-                d.file_tracker.tx_id = tx.id - 1;
-                tx.tx_data.update_file_flags(self.state_data.file_flags);
-                d.update_file_flags(tx.tx_data.file_flags);
-            },
-            _ => { },
+        if let Some(SMBTransactionTypeData::FILE(ref mut d)) = tx.type_data {
+            d.direction = direction;
+            d.fuid = fuid.to_vec();
+            d.file_name = file_name.to_vec();
+            d.file_tracker.tx_id = tx.id - 1;
+            tx.tx_data.update_file_flags(self.state_data.file_flags);
+            d.update_file_flags(tx.tx_data.file_flags);
         }
         tx.tx_data.init_files_opened();
         tx.tx_data.file_tx = if direction == Direction::ToServer { STREAM_TOSERVER } else { STREAM_TOCLIENT }; // TODO direction to flag func?
@@ -89,6 +86,34 @@ impl SMBState {
         return tx_ref.unwrap();
     }
 
+    /// get file tx for a open file. Returns None if a file for the fuid exists,
+    /// but has already been closed.
+    pub fn get_file_tx_by_fuid_with_open_file(&mut self, fuid: &[u8], direction: Direction)
+        -> Option<&mut SMBTransaction>
+    {
+        let f = fuid.to_vec();
+        for tx in &mut self.transactions {
+            let found = match tx.type_data {
+                Some(SMBTransactionTypeData::FILE(ref mut d)) => {
+                    direction == d.direction && f == d.fuid && !d.file_tracker.is_done()
+                },
+                _ => { false },
+            };
+
+            if found {
+                SCLogDebug!("SMB: Found SMB file TX with ID {}", tx.id);
+                if let Some(SMBTransactionTypeData::FILE(ref mut d)) = tx.type_data {
+                    tx.tx_data.update_file_flags(self.state_data.file_flags);
+                    d.update_file_flags(tx.tx_data.file_flags);
+                }
+                return Some(tx);
+            }
+        }
+        SCLogDebug!("SMB: Failed to find SMB TX with FUID {:?}", fuid);
+        return None;
+    }
+
+    /// get file tx for a fuid. File may already have been closed.
     pub fn get_file_tx_by_fuid(&mut self, fuid: &[u8], direction: Direction)
         -> Option<&mut SMBTransaction>
     {

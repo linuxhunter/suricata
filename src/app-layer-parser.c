@@ -61,8 +61,6 @@
 #include "app-layer-mqtt.h"
 #include "app-layer-snmp.h"
 #include "app-layer-quic.h"
-#include "app-layer-template.h"
-#include "app-layer-template-rust.h"
 #include "app-layer-rdp.h"
 #include "app-layer-http2.h"
 
@@ -350,9 +348,9 @@ int AppLayerParserConfParserEnabled(const char *ipproto,
     r = snprintf(param, sizeof(param), "%s%s%s", "app-layer.protocols.",
                  alproto_name, ".enabled");
     if (r < 0) {
-        FatalError(SC_ERR_FATAL, "snprintf failure.");
+        FatalError("snprintf failure.");
     } else if (r > (int)sizeof(param)) {
-        FatalError(SC_ERR_FATAL, "buffer not big enough to write param.");
+        FatalError("buffer not big enough to write param.");
     }
 
     node = ConfGetNode(param);
@@ -361,9 +359,9 @@ int AppLayerParserConfParserEnabled(const char *ipproto,
         r = snprintf(param, sizeof(param), "%s%s%s%s%s", "app-layer.protocols.",
                      alproto_name, ".", ipproto, ".enabled");
         if (r < 0) {
-            FatalError(SC_ERR_FATAL, "snprintf failure.");
+            FatalError("snprintf failure.");
         } else if (r > (int)sizeof(param)) {
-            FatalError(SC_ERR_FATAL, "buffer not big enough to write param.");
+            FatalError("buffer not big enough to write param.");
         }
 
         node = ConfGetNode(param);
@@ -380,7 +378,7 @@ int AppLayerParserConfParserEnabled(const char *ipproto,
     } else if (strcasecmp(node->val, "detection-only") == 0) {
         goto disabled;
     } else {
-        SCLogError(SC_ERR_FATAL, "Invalid value found for %s.", param);
+        SCLogError("Invalid value found for %s.", param);
         exit(EXIT_FAILURE);
     }
 
@@ -1740,11 +1738,10 @@ void AppLayerParserRegisterProtocolParsers(void)
     RegisterSNMPParsers();
     RegisterSIPParsers();
     RegisterQuicParsers();
-    RegisterTemplateRustParsers();
+    rs_template_register_parser();
     RegisterRFBParsers();
     RegisterMQTTParsers();
     rs_pgsql_register_parser();
-    RegisterTemplateParsers();
     RegisterRdpParsers();
     RegisterHTTP2Parsers();
     rs_telnet_register_parser();
