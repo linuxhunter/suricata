@@ -26,6 +26,11 @@
 
 #include "rust.h"
 
+/** max 63 to fit the 64 bit per protocol space */
+#define FRAME_STREAM_TYPE 63
+/** always the first frame to be created. TODO but what about protocol upgrades? */
+#define FRAME_STREAM_ID 1
+
 typedef int64_t FrameId;
 
 enum {
@@ -43,13 +48,12 @@ typedef struct Frame {
     uint8_t event_cnt;
     // TODO one event per frame enough?
     uint8_t events[4];  /**< per frame store for events */
-    int64_t rel_offset; /**< relative offset in the stream on top of Stream::stream_offset (if
-                           negative the start if before the stream data) */
+    uint64_t offset;    /**< offset from the start of the stream */
     int64_t len;
     int64_t id;
     uint64_t tx_id; /**< tx_id to match this frame. UINT64T_MAX if not used. */
+    uint64_t inspect_progress; /**< inspection tracker relative to the start of the frame */
 } Frame;
-// size 40
 
 #define FRAMES_STATIC_CNT 3
 
@@ -65,13 +69,11 @@ typedef struct Frames {
     AppProto alproto;
 #endif
 } Frames;
-// size 136
 
 typedef struct FramesContainer {
     Frames toserver;
     Frames toclient;
 } FramesContainer;
-// size 272
 
 void FramesFree(Frames *frames);
 void FramesPrune(Flow *f, Packet *p);
@@ -100,5 +102,9 @@ void AppLayerFramesSlide(Flow *f, const uint32_t slide, const uint8_t direction)
 
 FramesContainer *AppLayerFramesGetContainer(Flow *f);
 FramesContainer *AppLayerFramesSetupContainer(Flow *f);
+
+void FrameConfigInit(void);
+void FrameConfigEnableAll(void);
+void FrameConfigEnable(const AppProto p, const uint8_t type);
 
 #endif

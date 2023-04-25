@@ -139,7 +139,7 @@ impl<'a> SNMPState<'a> {
     }
 
     fn handle_snmp_v12(&mut self, msg: SnmpMessage<'a>, _direction: Direction) -> i32 {
-        let mut tx = self.new_tx();
+        let mut tx = self.new_tx(_direction);
         // in the message, version is encoded as 0 (version 1) or 1 (version 2)
         if self.version != msg.version + 1 {
             SCLogDebug!("SNMP version mismatch: expected {}, received {}", self.version, msg.version+1);
@@ -152,7 +152,7 @@ impl<'a> SNMPState<'a> {
     }
 
     fn handle_snmp_v3(&mut self, msg: SnmpV3Message<'a>, _direction: Direction) -> i32 {
-        let mut tx = self.new_tx();
+        let mut tx = self.new_tx(_direction);
         if self.version != msg.version {
             SCLogDebug!("SNMP version mismatch: expected {}, received {}", self.version, msg.version);
             self.set_event_tx(&mut tx, SNMPEvent::VersionMismatch);
@@ -204,9 +204,9 @@ impl<'a> SNMPState<'a> {
         self.transactions.clear();
     }
 
-    fn new_tx(&mut self) -> SNMPTransaction<'a> {
+    fn new_tx(&mut self, direction: Direction) -> SNMPTransaction<'a> {
         self.tx_id += 1;
-        SNMPTransaction::new(self.version, self.tx_id)
+        SNMPTransaction::new(direction, self.version, self.tx_id)
     }
 
     fn get_tx_by_id(&mut self, tx_id: u64) -> Option<&SNMPTransaction> {
@@ -235,7 +235,7 @@ impl<'a> SNMPState<'a> {
 }
 
 impl<'a> SNMPTransaction<'a> {
-    pub fn new(version: u32, id: u64) -> SNMPTransaction<'a> {
+    pub fn new(direction: Direction, version: u32, id: u64) -> SNMPTransaction<'a> {
         SNMPTransaction {
             version,
             info: None,
@@ -243,7 +243,7 @@ impl<'a> SNMPTransaction<'a> {
             usm: None,
             encrypted: false,
             id,
-            tx_data: applayer::AppLayerTxData::new(),
+            tx_data: applayer::AppLayerTxData::for_direction(direction),
         }
     }
 }

@@ -56,9 +56,9 @@ typedef struct FlowBucket_ {
     /** timestamp in seconds of the earliest possible moment a flow
      *  will time out in this row. Set by the flow manager. Cleared
      *  to 0 by workers, either when new flows are added or when a
-     *  flow state changes. The flow manager sets this to INT_MAX for
+     *  flow state changes. The flow manager sets this to UINT_MAX for
      *  empty buckets. */
-    SC_ATOMIC_DECLARE(int32_t, next_ts);
+    SC_ATOMIC_DECLARE(uint32_t, next_ts);
 } __attribute__((aligned(CLS))) FlowBucket;
 
 #ifdef FBLOCK_SPIN
@@ -85,6 +85,7 @@ Flow *FlowGetFromFlowKey(FlowKey *key, struct timespec *ttime, const uint32_t ha
 Flow *FlowGetExistingFlowFromHash(FlowKey * key, uint32_t hash);
 Flow *FlowGetExistingFlowFromFlowId(int64_t flow_id);
 uint32_t FlowKeyGetHash(FlowKey *flow_key);
+uint32_t FlowGetIpPairProtoHash(const Packet *p);
 
 /** \note f->fb must be locked */
 static inline void RemoveFromHash(Flow *f, Flow *prev_f)

@@ -344,23 +344,22 @@ static void DetectFilenameFree(DetectEngineCtx *de_ctx, void *ptr)
  */
 static int DetectFilenameSetupSticky(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    if (DetectBufferSetActiveList(s, g_file_name_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_file_name_buffer_id) < 0)
         return -1;
     s->file_flags |= (FILE_SIG_NEED_FILE | FILE_SIG_NEED_FILENAME);
     return 0;
 }
 
 static InspectionBuffer *FilenameGetDataCallback(DetectEngineThreadCtx *det_ctx,
-        const DetectEngineTransforms *transforms,
-        Flow *f, uint8_t flow_flags, File *cur_file,
-        int list_id, int local_file_id, bool first)
+        const DetectEngineTransforms *transforms, Flow *f, uint8_t flow_flags, File *cur_file,
+        int list_id, int local_file_id)
 {
     SCEnter();
 
     InspectionBuffer *buffer = InspectionBufferMultipleForListGet(det_ctx, list_id, local_file_id);
     if (buffer == NULL)
         return NULL;
-    if (!first && buffer->inspect != NULL)
+    if (buffer->initialized)
         return buffer;
 
     const uint8_t *data = cur_file->name;
@@ -380,7 +379,8 @@ static uint8_t DetectEngineInspectFilename(DetectEngineCtx *de_ctx, DetectEngine
         transforms = engine->v2.transforms;
     }
 
-    FileContainer *ffc = AppLayerParserGetTxFiles(f, txv, flags);
+    AppLayerGetFileState files = AppLayerParserGetTxFiles(f, alstate, txv, flags);
+    FileContainer *ffc = files.fc;
     if (ffc == NULL) {
         return DETECT_ENGINE_INSPECT_SIG_CANT_MATCH_FILES;
     }
@@ -388,8 +388,8 @@ static uint8_t DetectEngineInspectFilename(DetectEngineCtx *de_ctx, DetectEngine
     uint8_t r = DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
     int local_file_id = 0;
     for (File *file = ffc->head; file != NULL; file = file->next) {
-        InspectionBuffer *buffer = FilenameGetDataCallback(det_ctx,
-            transforms, f, flags, file, engine->sm_list, local_file_id, false);
+        InspectionBuffer *buffer = FilenameGetDataCallback(
+                det_ctx, transforms, f, flags, file, engine->sm_list, local_file_id);
         if (buffer == NULL)
             continue;
 
@@ -438,12 +438,13 @@ static void PrefilterTxFilename(DetectEngineThreadCtx *det_ctx, const void *pect
     const MpmCtx *mpm_ctx = ctx->mpm_ctx;
     const int list_id = ctx->list_id;
 
-    FileContainer *ffc = AppLayerParserGetTxFiles(f, txv, flags);
+    AppLayerGetFileState files = AppLayerParserGetTxFiles(f, f->alstate, txv, flags);
+    FileContainer *ffc = files.fc;
     if (ffc != NULL) {
         int local_file_id = 0;
         for (File *file = ffc->head; file != NULL; file = file->next) {
-            InspectionBuffer *buffer = FilenameGetDataCallback(det_ctx,
-                    ctx->transforms, f, flags, file, list_id, local_file_id, true);
+            InspectionBuffer *buffer = FilenameGetDataCallback(
+                    det_ctx, ctx->transforms, f, flags, file, list_id, local_file_id);
             if (buffer == NULL)
                 continue;
 

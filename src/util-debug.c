@@ -199,9 +199,9 @@ static inline void SCLogPrintToSyslog(int syslog_log_level, const char *msg)
 
 /**
  */
-static int SCLogMessageJSON(struct timeval *tval, char *buffer, size_t buffer_size,
-        SCLogLevel log_level, const char *file, unsigned line, const char *function,
-        const char *module, const char *message)
+static int SCLogMessageJSON(SCTime_t tval, char *buffer, size_t buffer_size, SCLogLevel log_level,
+        const char *file, unsigned line, const char *function, const char *module,
+        const char *message)
 {
     JsonBuilder *js = jb_new_object();
     if (unlikely(js == NULL))
@@ -341,10 +341,9 @@ static const char *SCTransformModule(const char *module_name, int *dn_len)
  *
  * \retval 0 on success; else a negative value on error
  */
-static SCError SCLogMessageGetBuffer(struct timeval *tval, int color, SCLogOPType type,
-        char *buffer, size_t buffer_size, const char *log_format, const SCLogLevel log_level,
-        const char *file, const unsigned int line, const char *function, const char *module,
-        const char *message)
+static SCError SCLogMessageGetBuffer(SCTime_t tval, int color, SCLogOPType type, char *buffer,
+        size_t buffer_size, const char *log_format, const SCLogLevel log_level, const char *file,
+        const unsigned int line, const char *function, const char *module, const char *message)
 {
     if (type == SC_LOG_OP_TYPE_JSON)
         return SCLogMessageJSON(
@@ -383,8 +382,9 @@ static SCError SCLogMessageGetBuffer(struct timeval *tval, int color, SCLogOPTyp
         strlcat(local_format, "%M", sizeof(local_format));
     char *temp_fmt = local_format;
     char *substr = temp_fmt;
+    struct tm local_tm;
 
-	while ( (temp_fmt = strchr(temp_fmt, SC_LOG_FMT_PREFIX)) ) {
+    while ((temp_fmt = strchr(temp_fmt, SC_LOG_FMT_PREFIX))) {
         if ((temp - buffer) > SC_LOG_MAX_LOG_MSG_LEN) {
             return 0;
         }
@@ -392,8 +392,24 @@ static SCError SCLogMessageGetBuffer(struct timeval *tval, int color, SCLogOPTyp
             case SC_LOG_FMT_TIME:
                 temp_fmt[0] = '\0';
 
-                struct tm local_tm;
-                tms = SCLocalTime(tval->tv_sec, &local_tm);
+                tms = SCLocalTime(SCTIME_SECS(tval), &local_tm);
+
+                cw = snprintf(temp, SC_LOG_MAX_LOG_MSG_LEN - (temp - buffer),
+                        "%s%s%04d-%02d-%02d %02d:%02d:%02d%s", substr, green, tms->tm_year + 1900,
+                        tms->tm_mon + 1, tms->tm_mday, tms->tm_hour, tms->tm_min, tms->tm_sec,
+                        reset);
+                if (cw < 0)
+                    return -1;
+                temp += cw;
+                temp_fmt++;
+                substr = temp_fmt;
+                substr++;
+                break;
+
+            case SC_LOG_FMT_TIME_LEGACY:
+                temp_fmt[0] = '\0';
+
+                tms = SCLocalTime(SCTIME_SECS(tval), &local_tm);
 
                 cw = snprintf(temp, SC_LOG_MAX_LOG_MSG_LEN - (temp - buffer),
                               "%s%s%d/%d/%04d -- %02d:%02d:%02d%s",
@@ -588,7 +604,7 @@ static SCError SCLogMessageGetBuffer(struct timeval *tval, int color, SCLogOPTyp
             }
         }
         temp_fmt++;
-	}
+    }
     if ((temp - buffer) > SC_LOG_MAX_LOG_MSG_LEN) {
         return 0;
     }
@@ -652,6 +668,7 @@ SCError SCLogMessage(const SCLogLevel log_level, const char *file, const unsigne
     /* get ts here so we log the same ts to each output */
     struct timeval tval;
     gettimeofday(&tval, NULL);
+    SCTime_t ts = SCTIME_FROM_TIMEVAL(&tval);
 
     op_iface_ctx = sc_log_config->op_ifaces;
     while (op_iface_ctx != NULL) {
@@ -662,8 +679,8 @@ SCError SCLogMessage(const SCLogLevel log_level, const char *file, const unsigne
 
         switch (op_iface_ctx->iface) {
             case SC_LOG_OP_IFACE_CONSOLE:
-                if (SCLogMessageGetBuffer(&tval, op_iface_ctx->use_color, op_iface_ctx->type,
-                            buffer, sizeof(buffer),
+                if (SCLogMessageGetBuffer(ts, op_iface_ctx->use_color, op_iface_ctx->type, buffer,
+                            sizeof(buffer),
                             op_iface_ctx->log_format ? op_iface_ctx->log_format
                                                      : sc_log_config->log_format,
                             log_level, file, line, function, module, message) == 0) {
@@ -671,7 +688,7 @@ SCError SCLogMessage(const SCLogLevel log_level, const char *file, const unsigne
                 }
                 break;
             case SC_LOG_OP_IFACE_FILE:
-                if (SCLogMessageGetBuffer(&tval, 0, op_iface_ctx->type, buffer, sizeof(buffer),
+                if (SCLogMessageGetBuffer(ts, 0, op_iface_ctx->type, buffer, sizeof(buffer),
                             op_iface_ctx->log_format ? op_iface_ctx->log_format
                                                      : sc_log_config->log_format,
                             log_level, file, line, function, module, message) == 0) {
@@ -692,7 +709,7 @@ SCError SCLogMessage(const SCLogLevel log_level, const char *file, const unsigne
                 }
                 break;
             case SC_LOG_OP_IFACE_SYSLOG:
-                if (SCLogMessageGetBuffer(&tval, 0, op_iface_ctx->type, buffer, sizeof(buffer),
+                if (SCLogMessageGetBuffer(ts, 0, op_iface_ctx->type, buffer, sizeof(buffer),
                             op_iface_ctx->log_format ? op_iface_ctx->log_format
                                                      : sc_log_config->log_format,
                             log_level, file, line, function, module, message) == 0) {
@@ -1068,13 +1085,13 @@ static inline const char *SCLogGetDefaultLogFormat(const SCLogLevel lvl)
     const char *prog_ver = GetProgramVersion();
     if (strstr(prog_ver, "RELEASE") != NULL) {
         if (lvl <= SC_LOG_NOTICE)
-            return SC_LOG_DEF_LOG_FORMAT_REL;
+            return SC_LOG_DEF_LOG_FORMAT_REL_NOTICE;
         else if (lvl <= SC_LOG_INFO)
-            return SC_LOG_DEF_LOG_FORMAT_RELV;
-        else if (lvl <= SC_LOG_PERF)
-            return SC_LOG_DEF_LOG_FORMAT_RELVV;
+            return SC_LOG_DEF_LOG_FORMAT_REL_INFO;
+        else if (lvl <= SC_LOG_CONFIG)
+            return SC_LOG_DEF_LOG_FORMAT_REL_CONFIG;
     }
-    return SC_LOG_DEF_LOG_FORMAT_DEV;
+    return SC_LOG_DEF_LOG_FORMAT_DEBUG;
 }
 
 /**
@@ -1801,7 +1818,7 @@ static int SCLogTestInit05(void)
 
 #endif /* UNITTESTS */
 
-void SCLogRegisterTests()
+void SCLogRegisterTests(void)
 {
 
 #ifdef UNITTESTS

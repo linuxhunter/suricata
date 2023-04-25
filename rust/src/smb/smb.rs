@@ -30,7 +30,8 @@ use std::str;
 use std::ffi::{self, CString};
 
 use std::collections::HashMap;
-
+use std::collections::VecDeque;
+ 
 use nom7::{Err, Needed};
 use nom7::error::{make_error, ErrorKind};
 
@@ -73,14 +74,16 @@ pub enum SMBFrameType {
 pub const MIN_REC_SIZE: u16 = 32 + 4; // SMB hdr + nbss hdr
 pub const SMB_CONFIG_DEFAULT_STREAM_DEPTH: u32 = 0;
 
-pub static mut SMB_CFG_MAX_READ_SIZE: u32 = 0;
-pub static mut SMB_CFG_MAX_READ_QUEUE_SIZE: u32 = 0;
-pub static mut SMB_CFG_MAX_READ_QUEUE_CNT: u32 = 0;
-pub static mut SMB_CFG_MAX_WRITE_SIZE: u32 = 0;
-pub static mut SMB_CFG_MAX_WRITE_QUEUE_SIZE: u32 = 0;
-pub static mut SMB_CFG_MAX_WRITE_QUEUE_CNT: u32 = 0;
+pub static mut SMB_CFG_MAX_READ_SIZE: u32 = 16777216;
+pub static mut SMB_CFG_MAX_READ_QUEUE_SIZE: u32 = 67108864;
+pub static mut SMB_CFG_MAX_READ_QUEUE_CNT: u32 = 64;
+pub static mut SMB_CFG_MAX_WRITE_SIZE: u32 = 16777216;
+pub static mut SMB_CFG_MAX_WRITE_QUEUE_SIZE: u32 = 67108864;
+pub static mut SMB_CFG_MAX_WRITE_QUEUE_CNT: u32 = 64;
 
 static mut ALPROTO_SMB: AppProto = ALPROTO_UNKNOWN;
+
+static mut SMB_MAX_TX: usize = 1024;
 
 pub static mut SURICATA_SMB_FILE_CONFIG: Option<&'static SuricataFileContext> = None;
 
@@ -334,8 +337,8 @@ impl SMBState {
         tx.response_done = self.tc_trunc; // no response expected if tc is truncated
 
         SCLogDebug!("SMB: TX SETFILEPATHINFO created: ID {}", tx.id);
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 
@@ -353,8 +356,8 @@ impl SMBState {
         tx.response_done = self.tc_trunc; // no response expected if tc is truncated
 
         SCLogDebug!("SMB: TX SETFILEPATHINFO created: ID {}", tx.id);
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 }
@@ -386,8 +389,8 @@ impl SMBState {
         tx.response_done = self.tc_trunc; // no response expected if tc is truncated
 
         SCLogDebug!("SMB: TX RENAME created: ID {}", tx.id);
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 }
@@ -525,6 +528,11 @@ impl SMBTransaction {
 
 impl Drop for SMBTransaction {
     fn drop(&mut self) {
+        if let Some(SMBTransactionTypeData::FILE(ref mut tdf)) = self.type_data {
+            if let Some(sfcm) = unsafe { SURICATA_SMB_FILE_CONFIG } {
+                tdf.file_tracker.file.free(sfcm);
+            }
+        }
         self.free();
     }
 }
@@ -712,7 +720,8 @@ pub struct SMBState<> {
     post_gap_files_checked: bool,
 
     /// transactions list
-    pub transactions: Vec<SMBTransaction>,
+    pub transactions: VecDeque<SMBTransaction>,
+    tx_index_completed: usize,
 
     /// tx counter for assigning incrementing id's to tx's
     tx_id: u64,
@@ -768,7 +777,8 @@ impl SMBState {
             tc_trunc: false,
             check_post_gap_file_txs: false,
             post_gap_files_checked: false,
-            transactions: Vec::new(),
+            transactions: VecDeque::new(),
+            tx_index_completed: 0,
             tx_id:0,
             dialect:0,
             dialect_vec: None,
@@ -788,6 +798,20 @@ impl SMBState {
         self.tx_id += 1;
         tx.id = self.tx_id;
         SCLogDebug!("TX {} created", tx.id);
+        if self.transactions.len() > unsafe { SMB_MAX_TX } {
+            let mut index = self.tx_index_completed;
+            for tx_old in &mut self.transactions.range_mut(self.tx_index_completed..) {
+                index += 1;
+                if !tx_old.request_done || !tx_old.response_done {
+                    tx_old.request_done = true;
+                    tx_old.response_done = true;
+                    tx_old.set_event(SMBEvent::TooManyTransactions);
+                    break;
+                }
+            }
+            self.tx_index_completed = index;
+
+        }
         return tx;
     }
 
@@ -808,6 +832,7 @@ impl SMBState {
         if found {
             SCLogDebug!("freeing TX with ID {} TX.ID {} at index {} left: {} max id: {}",
                     tx_id, tx_id+1, index, self.transactions.len(), self.tx_id);
+            self.tx_index_completed = 0;
             self.transactions.remove(index);
         }
     }
@@ -872,15 +897,15 @@ impl SMBState {
 
         SCLogDebug!("SMB: TX GENERIC created: ID {} tx list {} {:?}",
                 tx.id, self.transactions.len(), &tx);
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 
     pub fn get_last_tx(&mut self, smb_ver: u8, smb_cmd: u16)
         -> Option<&mut SMBTransaction>
     {
-        let tx_ref = self.transactions.last_mut();
+        let tx_ref = self.transactions.back_mut();
         if let Some(tx) = tx_ref {
             let found = if tx.vercmd.get_version() == smb_ver {
                 if smb_ver == 1 {
@@ -942,8 +967,8 @@ impl SMBState {
         tx.response_done = self.tc_trunc; // no response expected if tc is truncated
 
         SCLogDebug!("SMB: TX NEGOTIATE created: ID {} SMB ver {}", tx.id, smb_ver);
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 
@@ -977,8 +1002,8 @@ impl SMBState {
 
         SCLogDebug!("SMB: TX TREECONNECT created: ID {} NAME {}",
                 tx.id, String::from_utf8_lossy(&name));
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 
@@ -1011,8 +1036,8 @@ impl SMBState {
         tx.request_done = true;
         tx.response_done = self.tc_trunc; // no response expected if tc is truncated
 
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 
@@ -1077,8 +1102,7 @@ impl SMBState {
                     if self.ts > f.post_gap_ts {
                         tx.request_done = true;
                         tx.response_done = true;
-                        let (files, flags) = f.files.get(f.direction);
-                        f.file_tracker.trunc(files, flags);
+                        filetracker_trunc(&mut f.file_tracker);
                     } else {
                         post_gap_txs = true;
                     }
@@ -1148,13 +1172,12 @@ impl SMBState {
         }
     }
 
-    pub fn set_skip(&mut self, direction: Direction, rec_size: u32, data_size: u32)
+    pub fn set_skip(&mut self, direction: Direction, nbss_remaining: u32)
     {
-        let skip = rec_size.saturating_sub(data_size);
         if direction == Direction::ToServer {
-            self.skip_ts = skip;
+            self.skip_ts = nbss_remaining;
         } else {
-            self.skip_tc = skip;
+            self.skip_tc = nbss_remaining;
         }
     }
 
@@ -1243,7 +1266,7 @@ impl SMBState {
     }
 
     /// return bytes consumed
-    pub fn parse_tcp_data_ts_partial<'b>(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &'b[u8]) -> usize
+    pub fn parse_tcp_data_ts_partial(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8]) -> usize
     {
         SCLogDebug!("incomplete of size {}", input.len());
         if input.len() < 512 {
@@ -1282,8 +1305,12 @@ impl SMBState {
                                 if is_pipe {
                                     return 0;
                                 }
-                                smb1_write_request_record(self, r, SMB1_HEADER_SIZE, SMB1_COMMAND_WRITE_ANDX);
-                                
+                                // how many more bytes are expected within this NBSS record
+                                // So that we can check that further parsed offsets and lengths
+                                // stay within the NBSS record.
+                                let nbss_remaining = nbss_part_hdr.length - nbss_part_hdr.data.len() as u32;
+                                smb1_write_request_record(self, r, SMB1_HEADER_SIZE, SMB1_COMMAND_WRITE_ANDX, nbss_remaining);
+
                                 self.add_nbss_ts_frames(flow, stream_slice, input, nbss_part_hdr.length as i64);
                                 self.add_smb1_ts_pdu_frame(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64);
                                 self.add_smb1_ts_hdr_data_frames(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64);
@@ -1298,8 +1325,12 @@ impl SMBState {
                             SCLogDebug!("SMB2: partial record {}",
                                         &smb2_command_string(smb_record.command));
                             if smb_record.command == SMB2_COMMAND_WRITE {
-                                smb2_write_request_record(self, smb_record);
-                                
+                                // how many more bytes are expected within this NBSS record
+                                // So that we can check that further parsed offsets and lengths
+                                // stay within the NBSS record.
+                                let nbss_remaining = nbss_part_hdr.length - nbss_part_hdr.data.len() as u32;
+                                smb2_write_request_record(self, smb_record, nbss_remaining);
+
                                 self.add_nbss_ts_frames(flow, stream_slice, input, nbss_part_hdr.length as i64);
                                 self.add_smb2_ts_pdu_frame(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64);
                                 self.add_smb2_ts_hdr_data_frames(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64, smb_record.header_len as i64);
@@ -1397,7 +1428,7 @@ impl SMBState {
                                             if smb_record.is_request() {
                                                 smb1_request_record(self, smb_record);
                                             } else {
-                                                // If we recevied a response when expecting a request, set an event
+                                                // If we received a response when expecting a request, set an event
                                                 // on the PDU frame instead of handling the response.
                                                 SCLogDebug!("SMB1 reply seen from client to server");
                                                 if let Some(frame) = pdu_frame {
@@ -1426,7 +1457,7 @@ impl SMBState {
                                                 if smb_record.is_request() {
                                                     smb2_request_record(self, smb_record);
                                                 } else {
-                                                    // If we recevied a response when expecting a request, set an event
+                                                    // If we received a response when expecting a request, set an event
                                                     // on the PDU frame instead of handling the response.
                                                     SCLogDebug!("SMB2 reply seen from client to server");
                                                     if let Some(frame) = pdu_frame {
@@ -1571,7 +1602,7 @@ impl SMBState {
     }
 
     /// return bytes consumed
-    pub fn parse_tcp_data_tc_partial<'b>(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &'b[u8]) -> usize
+    pub fn parse_tcp_data_tc_partial(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8]) -> usize
     {
         SCLogDebug!("incomplete of size {}", input.len());
         if input.len() < 512 {
@@ -1617,7 +1648,11 @@ impl SMBState {
                                 self.add_smb1_tc_pdu_frame(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64);
                                 self.add_smb1_tc_hdr_data_frames(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64);
 
-                                smb1_read_response_record(self, r, SMB1_HEADER_SIZE);
+                                // how many more bytes are expected within this NBSS record
+                                // So that we can check that further parsed offsets and lengths
+                                // stay within the NBSS record.
+                                let nbss_remaining = nbss_part_hdr.length - nbss_part_hdr.data.len() as u32;
+                                smb1_read_response_record(self, r, SMB1_HEADER_SIZE, nbss_remaining);
                                 let consumed = input.len() - output.len();
                                 return consumed;
                             }
@@ -1634,7 +1669,11 @@ impl SMBState {
                                 self.add_smb2_tc_pdu_frame(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64);
                                 self.add_smb2_tc_hdr_data_frames(flow, stream_slice, nbss_part_hdr.data, nbss_part_hdr.length as i64, smb_record.header_len as i64);
 
-                                smb2_read_response_record(self, smb_record);
+                                // how many more bytes are expected within this NBSS record
+                                // So that we can check that further parsed offsets and lengths
+                                // stay within the NBSS record.
+                                let nbss_remaining = nbss_part_hdr.length - nbss_part_hdr.data.len() as u32;
+                                smb2_read_response_record(self, smb_record, nbss_remaining);
                                 let consumed = input.len() - output.len();
                                 return consumed;
                             }
@@ -2397,6 +2436,17 @@ pub unsafe extern "C" fn rs_smb_register_parser() {
                 Err(_) => { SCLogError!("Invalid max-read-queue-cnt value"); }
             }
         }
+        if let Some(val) = conf_get("app-layer.protocols.smb.max-tx") {
+            if let Ok(v) = val.parse::<usize>() {
+                SMB_MAX_TX = v;
+            } else {
+                SCLogError!("Invalid value for smb.max-tx");
+            }
+        }
+        SCLogConfig!("read: max record size: {}, max queued chunks {}, max queued size {}",
+                SMB_CFG_MAX_READ_SIZE, SMB_CFG_MAX_READ_QUEUE_CNT, SMB_CFG_MAX_READ_QUEUE_SIZE);
+        SCLogConfig!("write: max record size: {}, max queued chunks {}, max queued size {}",
+                SMB_CFG_MAX_WRITE_SIZE, SMB_CFG_MAX_WRITE_QUEUE_CNT, SMB_CFG_MAX_WRITE_QUEUE_SIZE);
     } else {
         SCLogDebug!("Protocol detector and parser disabled for SMB.");
     }

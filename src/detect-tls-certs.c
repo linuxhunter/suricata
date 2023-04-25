@@ -126,7 +126,7 @@ void DetectTlsCertsRegister(void)
 static int DetectTlsCertsSetup(DetectEngineCtx *de_ctx, Signature *s,
                                const char *str)
 {
-    if (DetectBufferSetActiveList(s, g_tls_certs_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_tls_certs_buffer_id) < 0)
         return -1;
 
     if (DetectSignatureSetAppProto(s, ALPROTO_TLS) < 0)
@@ -143,8 +143,8 @@ static InspectionBuffer *TlsCertsGetData(DetectEngineThreadCtx *det_ctx,
 
     InspectionBuffer *buffer =
             InspectionBufferMultipleForListGet(det_ctx, list_id, cbdata->local_id);
-    if (buffer == NULL)
-        return NULL;
+    if (buffer == NULL || buffer->initialized)
+        return buffer;
 
     const SSLState *ssl_state = (SSLState *)f->alstate;
     const SSLStateConnp *connp;
@@ -156,6 +156,7 @@ static InspectionBuffer *TlsCertsGetData(DetectEngineThreadCtx *det_ctx,
     }
 
     if (TAILQ_EMPTY(&connp->certs)) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
     }
 
@@ -165,6 +166,7 @@ static InspectionBuffer *TlsCertsGetData(DetectEngineThreadCtx *det_ctx,
         cbdata->cert = TAILQ_NEXT(cbdata->cert, next);
     }
     if (cbdata->cert == NULL) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
     }
 
@@ -204,7 +206,7 @@ static uint8_t DetectEngineInspectTlsCerts(DetectEngineCtx *de_ctx, DetectEngine
             return DETECT_ENGINE_INSPECT_SIG_MATCH;
         }
 
-	cbdata.local_id++;
+        cbdata.local_id++;
     }
 
     return DETECT_ENGINE_INSPECT_SIG_NO_MATCH;

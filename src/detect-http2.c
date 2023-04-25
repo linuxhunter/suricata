@@ -658,7 +658,7 @@ void DetectHTTP2settingsFree(DetectEngineCtx *de_ctx, void *ptr)
 
 static int DetectHTTP2headerNameSetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
-    if (DetectBufferSetActiveList(s, g_http2_header_name_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_http2_header_name_buffer_id) < 0)
         return -1;
 
     if (DetectSignatureSetAppProto(s, ALPROTO_HTTP2) != 0)
@@ -672,10 +672,9 @@ static void PrefilterMpmHttp2HNameFree(void *ptr)
     SCFree(ptr);
 }
 
-static InspectionBuffer *GetHttp2HNameData(DetectEngineThreadCtx *det_ctx,
-        const uint8_t flags, const DetectEngineTransforms *transforms,
-        Flow *_f, const struct MpmListIdDataArgs *cbdata,
-        int list_id, bool first)
+static InspectionBuffer *GetHttp2HNameData(DetectEngineThreadCtx *det_ctx, const uint8_t flags,
+        const DetectEngineTransforms *transforms, Flow *_f, const struct MpmListIdDataArgs *cbdata,
+        int list_id)
 {
     SCEnter();
 
@@ -683,19 +682,22 @@ static InspectionBuffer *GetHttp2HNameData(DetectEngineThreadCtx *det_ctx,
             InspectionBufferMultipleForListGet(det_ctx, list_id, cbdata->local_id);
     if (buffer == NULL)
         return NULL;
-    if (!first && buffer->inspect != NULL)
+    if (buffer->initialized)
         return buffer;
 
     uint32_t b_len = 0;
     const uint8_t *b = NULL;
 
-    if (rs_http2_tx_get_header_name(cbdata->txv, flags, cbdata->local_id, &b, &b_len) != 1)
+    if (rs_http2_tx_get_header_name(cbdata->txv, flags, cbdata->local_id, &b, &b_len) != 1) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
-    if (b == NULL || b_len == 0)
+    }
+    if (b == NULL || b_len == 0) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
+    }
 
-    InspectionBufferSetup(det_ctx, list_id, buffer, b, b_len);
-    InspectionBufferApplyTransforms(buffer, transforms);
+    InspectionBufferSetupMulti(buffer, transforms, b, b_len);
 
     SCReturnPtr(buffer, "InspectionBuffer");
 }
@@ -715,8 +717,8 @@ static void PrefilterTxHttp2HName(DetectEngineThreadCtx *det_ctx, const void *pe
         // loop until we get a NULL
 
         struct MpmListIdDataArgs cbdata = { local_id, txv };
-        InspectionBuffer *buffer = GetHttp2HNameData(det_ctx, flags, ctx->transforms,
-                f, &cbdata, list_id, true);
+        InspectionBuffer *buffer =
+                GetHttp2HNameData(det_ctx, flags, ctx->transforms, f, &cbdata, list_id);
         if (buffer == NULL)
             break;
 
@@ -762,8 +764,8 @@ static uint8_t DetectEngineInspectHttp2HeaderName(DetectEngineCtx *de_ctx,
     while (1) {
         //TODOask use MpmListIdDataArgs elsewhere
         struct MpmListIdDataArgs cbdata = { local_id, txv, };
-        InspectionBuffer *buffer = GetHttp2HNameData(det_ctx, flags,
-                transforms, f, &cbdata, engine->sm_list, false);
+        InspectionBuffer *buffer =
+                GetHttp2HNameData(det_ctx, flags, transforms, f, &cbdata, engine->sm_list);
 
         if (buffer == NULL || buffer->inspect == NULL)
             break;
@@ -789,7 +791,7 @@ static uint8_t DetectEngineInspectHttp2HeaderName(DetectEngineCtx *de_ctx,
 
 static int DetectHTTP2headerSetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
-    if (DetectBufferSetActiveList(s, g_http2_header_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_http2_header_buffer_id) < 0)
         return -1;
 
     if (DetectSignatureSetAppProto(s, ALPROTO_HTTP2) != 0)
@@ -803,10 +805,9 @@ static void PrefilterMpmHttp2HeaderFree(void *ptr)
     SCFree(ptr);
 }
 
-static InspectionBuffer *GetHttp2HeaderData(DetectEngineThreadCtx *det_ctx,
-        const uint8_t flags, const DetectEngineTransforms *transforms,
-        Flow *_f, const struct MpmListIdDataArgs *cbdata,
-        int list_id, bool first)
+static InspectionBuffer *GetHttp2HeaderData(DetectEngineThreadCtx *det_ctx, const uint8_t flags,
+        const DetectEngineTransforms *transforms, Flow *_f, const struct MpmListIdDataArgs *cbdata,
+        int list_id)
 {
     SCEnter();
 
@@ -814,16 +815,20 @@ static InspectionBuffer *GetHttp2HeaderData(DetectEngineThreadCtx *det_ctx,
             InspectionBufferMultipleForListGet(det_ctx, list_id, cbdata->local_id);
     if (buffer == NULL)
         return NULL;
-    if (!first && buffer->inspect != NULL)
+    if (buffer->initialized)
         return buffer;
 
     uint32_t b_len = 0;
     const uint8_t *b = NULL;
 
-    if (rs_http2_tx_get_header(cbdata->txv, flags, cbdata->local_id, &b, &b_len) != 1)
+    if (rs_http2_tx_get_header(cbdata->txv, flags, cbdata->local_id, &b, &b_len) != 1) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
-    if (b == NULL || b_len == 0)
+    }
+    if (b == NULL || b_len == 0) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
+    }
 
     InspectionBufferSetupMulti(buffer, transforms, b, b_len);
 
@@ -845,8 +850,8 @@ static void PrefilterTxHttp2Header(DetectEngineThreadCtx *det_ctx, const void *p
         // loop until we get a NULL
 
         struct MpmListIdDataArgs cbdata = { local_id, txv };
-        InspectionBuffer *buffer = GetHttp2HeaderData(det_ctx, flags, ctx->transforms,
-                f, &cbdata, list_id, true);
+        InspectionBuffer *buffer =
+                GetHttp2HeaderData(det_ctx, flags, ctx->transforms, f, &cbdata, list_id);
         if (buffer == NULL)
             break;
 
@@ -890,8 +895,8 @@ static uint8_t DetectEngineInspectHttp2Header(DetectEngineCtx *de_ctx,
 
     while (1) {
         struct MpmListIdDataArgs cbdata = { local_id, txv, };
-        InspectionBuffer *buffer = GetHttp2HeaderData(det_ctx, flags,
-                transforms, f, &cbdata, engine->sm_list, false);
+        InspectionBuffer *buffer =
+                GetHttp2HeaderData(det_ctx, flags, transforms, f, &cbdata, engine->sm_list);
 
         if (buffer == NULL || buffer->inspect == NULL)
             break;

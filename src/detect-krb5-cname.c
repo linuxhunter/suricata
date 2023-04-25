@@ -46,7 +46,7 @@ struct Krb5PrincipalNameDataArgs {
 
 static int DetectKrb5CNameSetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
-    if (DetectBufferSetActiveList(s, g_krb5_cname_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_krb5_cname_buffer_id) < 0)
         return -1;
 
     if (DetectSignatureSetAppProto(s, ALPROTO_KRB5) != 0)
@@ -56,9 +56,8 @@ static int DetectKrb5CNameSetup(DetectEngineCtx *de_ctx, Signature *s, const cha
 }
 
 static InspectionBuffer *GetKrb5CNameData(DetectEngineThreadCtx *det_ctx,
-        const DetectEngineTransforms *transforms,
-        Flow *_f, const struct Krb5PrincipalNameDataArgs *cbdata,
-        int list_id, bool first)
+        const DetectEngineTransforms *transforms, Flow *_f,
+        const struct Krb5PrincipalNameDataArgs *cbdata, int list_id)
 {
     SCEnter();
 
@@ -66,16 +65,20 @@ static InspectionBuffer *GetKrb5CNameData(DetectEngineThreadCtx *det_ctx,
             InspectionBufferMultipleForListGet(det_ctx, list_id, cbdata->local_id);
     if (buffer == NULL)
         return NULL;
-    if (!first && buffer->inspect != NULL)
+    if (buffer->initialized)
         return buffer;
 
     uint32_t b_len = 0;
     const uint8_t *b = NULL;
 
-    if (rs_krb5_tx_get_cname(cbdata->txv, cbdata->local_id, &b, &b_len) != 1)
+    if (rs_krb5_tx_get_cname(cbdata->txv, cbdata->local_id, &b, &b_len) != 1) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
-    if (b == NULL || b_len == 0)
+    }
+    if (b == NULL || b_len == 0) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
+    }
 
     InspectionBufferSetupMulti(buffer, transforms, b, b_len);
 
@@ -95,8 +98,8 @@ static uint8_t DetectEngineInspectKrb5CName(DetectEngineCtx *de_ctx, DetectEngin
 
     while (1) {
         struct Krb5PrincipalNameDataArgs cbdata = { local_id, txv, };
-        InspectionBuffer *buffer = GetKrb5CNameData(det_ctx,
-                transforms, f, &cbdata, engine->sm_list, false);
+        InspectionBuffer *buffer =
+                GetKrb5CNameData(det_ctx, transforms, f, &cbdata, engine->sm_list);
 
         if (buffer == NULL || buffer->inspect == NULL)
             break;
@@ -149,8 +152,7 @@ static void PrefilterTxKrb5CName(DetectEngineThreadCtx *det_ctx, const void *pec
         // loop until we get a NULL
 
         struct Krb5PrincipalNameDataArgs cbdata = { local_id, txv };
-        InspectionBuffer *buffer = GetKrb5CNameData(det_ctx, ctx->transforms,
-                f, &cbdata, list_id, true);
+        InspectionBuffer *buffer = GetKrb5CNameData(det_ctx, ctx->transforms, f, &cbdata, list_id);
         if (buffer == NULL)
             break;
 

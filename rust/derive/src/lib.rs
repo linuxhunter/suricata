@@ -1,4 +1,4 @@
-/* Copyright (C) 2020 Open Information Security Foundation
+/* Copyright (C) 2020-2023 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -14,6 +14,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
  */
+
+#![allow(clippy::uninlined_format_args)]
 
 extern crate proc_macro;
 
@@ -32,12 +34,14 @@ mod applayerframetype;
 ///     MalformedData,
 ///     NotRequest,
 ///     NotResponse,
+///     #[name("reserved_z_flag_set")]
 ///     ZFlagSet,
 /// }
 ///
 /// The enum variants must follow the naming convention of OneTwoThree
-/// for proper conversion to the name used in rules (one_tow_three).
-#[proc_macro_derive(AppLayerEvent)]
+/// for proper conversion to the name used in rules (one_tow_three) or
+/// optionally add a name attribute.
+#[proc_macro_derive(AppLayerEvent, attributes(name))]
 pub fn derive_app_layer_event(input: TokenStream) -> TokenStream {
     applayerevent::derive_app_layer_event(input)
 }

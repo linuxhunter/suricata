@@ -479,17 +479,12 @@ static inline void SCACBSCreateDeltaTable(MpmCtx *mpm_ctx)
     int32_t r_state = 0;
 
     if (ctx->state_count < 32767) {
-        ctx->state_table_u16 = SCMalloc(ctx->state_count *
-                                        sizeof(SC_AC_BS_STATE_TYPE_U16) * 256);
+        ctx->state_table_u16 = SCCalloc(ctx->state_count, sizeof(*ctx->state_table_u16));
         if (ctx->state_table_u16 == NULL) {
             FatalError("Error allocating memory");
         }
-        memset(ctx->state_table_u16, 0,
-               ctx->state_count * sizeof(SC_AC_BS_STATE_TYPE_U16) * 256);
-
         mpm_ctx->memory_cnt++;
-        mpm_ctx->memory_size += (ctx->state_count *
-                                 sizeof(SC_AC_BS_STATE_TYPE_U16) * 256);
+        mpm_ctx->memory_size += (ctx->state_count * sizeof(*ctx->state_table_u16));
 
         StateQueue q;
         memset(&q, 0, sizeof(StateQueue));
@@ -521,17 +516,12 @@ static inline void SCACBSCreateDeltaTable(MpmCtx *mpm_ctx)
         /* create space for the state table.  We could have used the existing goto
          * table, but since we have it set to hold 32 bit state values, we will create
          * a new state table here of type SC_AC_BS_STATE_TYPE(current set to uint16_t) */
-        ctx->state_table_u32 = SCMalloc(ctx->state_count *
-                                        sizeof(SC_AC_BS_STATE_TYPE_U32) * 256);
+        ctx->state_table_u32 = SCCalloc(ctx->state_count, sizeof(*ctx->state_table_u32));
         if (ctx->state_table_u32 == NULL) {
             FatalError("Error allocating memory");
         }
-        memset(ctx->state_table_u32, 0,
-               ctx->state_count * sizeof(SC_AC_BS_STATE_TYPE_U32) * 256);
-
         mpm_ctx->memory_cnt++;
-        mpm_ctx->memory_size += (ctx->state_count *
-                                 sizeof(SC_AC_BS_STATE_TYPE_U32) * 256);
+        mpm_ctx->memory_size += (ctx->state_count * sizeof(*ctx->state_table_u32));
 
         StateQueue q;
         memset(&q, 0, sizeof(StateQueue));
@@ -1163,7 +1153,7 @@ uint32_t SCACBSSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
                     ascii_codes = state_table_mod_pointers[state & 0x7FFF] + 1;
                     buf_local = u8_tolower(buf[i]);
                     if (buf_local == ascii_codes[0]) {
-                        state = *(ascii_codes + no_of_entries);;
+                        state = *(ascii_codes + no_of_entries);
                     } else {
                         state = zero_state[buf_local];
                     }
@@ -1246,9 +1236,9 @@ uint32_t SCACBSSearch(const MpmCtx *mpm_ctx, MpmThreadCtx *mpm_thread_ctx,
                     ascii_codes = state_table_mod_pointers[state & 0x00FFFFFF] + 1;
                     buf_local = u8_tolower(buf[i]);
                     if (buf_local == ascii_codes[0]) {
-                        state = *(ascii_codes + no_of_entries);;
+                        state = *(ascii_codes + no_of_entries);
                     } else {
-                        state = zero_state[buf_local];;
+                        state = zero_state[buf_local];
                     }
                 } else {
                     if (no_of_entries == 0) {

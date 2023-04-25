@@ -2194,7 +2194,7 @@ static int SigTest28TCPV6Keyword(void)
     p2->tcph = (TCPHdr *) (invalid_raw_ipv6 + 54);
     p2->src.family = AF_INET;
     p2->dst.family = AF_INET;
-    p2->payload = invalid_raw_ipv6 + 54 + 20;;
+    p2->payload = invalid_raw_ipv6 + 54 + 20;
     p2->payload_len = 12;
     p2->proto = IPPROTO_TCP;
 
@@ -2320,7 +2320,7 @@ static int SigTest29NegativeTCPV6Keyword(void)
     p2->tcph = (TCPHdr *) (invalid_raw_ipv6 + 54);
     p2->src.family = AF_INET;
     p2->dst.family = AF_INET;
-    p2->payload = invalid_raw_ipv6 + 54 + 20;;
+    p2->payload = invalid_raw_ipv6 + 54 + 20;
     p2->payload_len = 12;
     p2->proto = IPPROTO_TCP;
 
@@ -3499,7 +3499,7 @@ static int SigTest37ContentAndIsdataatKeywords02 (void)
         goto end;
     }
 
-    if (s->sm_lists[DETECT_SM_LIST_PMATCH]->type != DETECT_CONTENT) {
+    if (s->init_data->smlists[DETECT_SM_LIST_PMATCH]->type != DETECT_CONTENT) {
         printf("type not content: ");
         goto end;
     }

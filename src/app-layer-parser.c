@@ -96,7 +96,7 @@ typedef struct AppLayerParserProtoCtx_
 
     /** get FileContainer reference from the TX. MUST return a non-NULL reference if the TX
      *  has or may have files in the requested direction at some point. */
-    FileContainer *(*GetTxFiles)(void *, uint8_t);
+    AppLayerGetFileState (*GetTxFiles)(void *, void *, uint8_t);
 
     int (*StateGetProgress)(void *alstate, uint8_t direction);
     uint64_t (*StateGetTxCnt)(void *alstate);
@@ -157,7 +157,7 @@ struct AppLayerParserState_ {
     FramesContainer *frames;
 };
 
-enum ExceptionPolicy g_applayerparser_error_policy = EXCEPTION_POLICY_IGNORE;
+enum ExceptionPolicy g_applayerparser_error_policy = EXCEPTION_POLICY_NOT_SET;
 
 static void AppLayerConfg(void)
 {
@@ -456,8 +456,8 @@ void AppLayerParserRegisterLocalStorageFunc(uint8_t ipproto, AppProto alproto,
     SCReturn;
 }
 
-void AppLayerParserRegisterGetTxFilesFunc(
-        uint8_t ipproto, AppProto alproto, FileContainer *(*GetTxFiles)(void *, uint8_t))
+void AppLayerParserRegisterGetTxFilesFunc(uint8_t ipproto, AppProto alproto,
+        AppLayerGetFileState (*GetTxFiles)(void *, void *, uint8_t))
 {
     SCEnter();
 
@@ -888,28 +888,25 @@ AppLayerDecoderEvents *AppLayerParserGetEventsByTx(uint8_t ipproto, AppProto alp
     SCReturnPtr(ptr, "AppLayerDecoderEvents *");
 }
 
-FileContainer *AppLayerParserGetTxFiles(const Flow *f, void *tx, const uint8_t direction)
+AppLayerGetFileState AppLayerParserGetTxFiles(
+        const Flow *f, void *state, void *tx, const uint8_t direction)
 {
     SCEnter();
 
-    FileContainer *ptr = NULL;
-
     if (alp_ctx.ctxs[f->protomap][f->alproto].GetTxFiles != NULL) {
-        ptr = alp_ctx.ctxs[f->protomap][f->alproto].GetTxFiles(tx, direction);
+        return alp_ctx.ctxs[f->protomap][f->alproto].GetTxFiles(state, tx, direction);
     }
 
-    SCReturnPtr(ptr, "FileContainer *");
+    AppLayerGetFileState files = { .fc = NULL, .cfg = NULL };
+    return files;
 }
 
 static void AppLayerParserFileTxHousekeeping(
         const Flow *f, void *tx, const uint8_t pkt_dir, const bool trunc)
 {
-    FileContainer *fc = AppLayerParserGetTxFiles(f, tx, pkt_dir);
-    if (fc) {
-        if (trunc) {
-            FileTruncateAllOpenFiles(fc);
-        }
-        FilePrune(fc);
+    AppLayerGetFileState files = AppLayerParserGetTxFiles(f, FlowGetAppState(f), tx, pkt_dir);
+    if (files.fc) {
+        FilesPrune(files.fc, files.cfg, trunc);
     }
 }
 
@@ -1131,8 +1128,9 @@ int AppLayerParserGetStateProgress(uint8_t ipproto, AppProto alproto,
     if (unlikely(IS_DISRUPTED(flags))) {
         r = StateGetProgressCompletionStatus(alproto, flags);
     } else {
-        r = alp_ctx.ctxs[FlowGetProtoMapping(ipproto)][alproto].
-            StateGetProgress(alstate, flags);
+        uint8_t direction = flags & (STREAM_TOCLIENT | STREAM_TOSERVER);
+        r = alp_ctx.ctxs[FlowGetProtoMapping(ipproto)][alproto].StateGetProgress(
+                alstate, direction);
     }
     SCReturnInt(r);
 }
@@ -1258,6 +1256,54 @@ static inline void SetEOFFlags(AppLayerParserState *pstate, const uint8_t flags)
     }
 }
 
+/** \internal
+ *  \brief create/close stream frames
+ *  On first invocation of TCP parser in a direction, create a <alproto>.stream frame.
+ *  On STREAM_EOF, set the final length. */
+static void HandleStreamFrames(Flow *f, StreamSlice stream_slice, const uint8_t *input,
+        const uint32_t input_len, const uint8_t flags)
+{
+    const uint8_t direction = (flags & STREAM_TOSERVER) ? 0 : 1;
+    AppLayerParserState *pstate = f->alparser;
+
+    /* setup the generic stream frame */
+    if (((direction == 0 && (pstate->flags & APP_LAYER_PARSER_SFRAME_TS) == 0) ||
+                (direction == 1 && (pstate->flags & APP_LAYER_PARSER_SFRAME_TC) == 0)) &&
+            input != NULL && f->proto == IPPROTO_TCP) {
+        Frame *frame = AppLayerFrameGetById(f, direction, FRAME_STREAM_ID);
+        if (frame == NULL) {
+            int64_t frame_len = -1;
+            if (flags & STREAM_EOF)
+                frame_len = input_len;
+
+            frame = AppLayerFrameNewByAbsoluteOffset(
+                    f, &stream_slice, stream_slice.offset, frame_len, direction, FRAME_STREAM_TYPE);
+            if (frame) {
+                SCLogDebug("opened: frame %p id %" PRIi64, frame, frame->id);
+                frame->flags = FRAME_FLAG_ENDS_AT_EOF; // TODO logic is not yet implemented
+                DEBUG_VALIDATE_BUG_ON(
+                        frame->id != 1); // should always be the first frame that is created
+            }
+            if (direction == 0) {
+                pstate->flags |= APP_LAYER_PARSER_SFRAME_TS;
+            } else {
+                pstate->flags |= APP_LAYER_PARSER_SFRAME_TC;
+            }
+        }
+    } else if (flags & STREAM_EOF) {
+        Frame *frame = AppLayerFrameGetById(f, direction, FRAME_STREAM_ID);
+        SCLogDebug("EOF closing: frame %p", frame);
+        if (frame) {
+            /* calculate final frame length */
+            int64_t slice_o = (int64_t)stream_slice.offset - (int64_t)frame->offset;
+            int64_t frame_len = slice_o + (int64_t)input_len;
+            SCLogDebug("%s: EOF frame->offset %" PRIu64 " -> %" PRIi64 ": o %" PRIi64,
+                    AppProtoToString(f->alproto), frame->offset, frame_len, slice_o);
+            frame->len = frame_len;
+        }
+    }
+}
+
 static void Setup(Flow *f, const uint8_t direction, const uint8_t *input, uint32_t input_len,
         const uint8_t flags, StreamSlice *as)
 {
@@ -1353,6 +1399,8 @@ int AppLayerParserParse(ThreadVars *tv, AppLayerParserThreadCtx *alp_tctx, Flow 
     if (input_len > 0 || (flags & STREAM_EOF)) {
         Setup(f, flags & (STREAM_TOSERVER | STREAM_TOCLIENT), input, input_len, flags,
                 &stream_slice);
+        HandleStreamFrames(f, stream_slice, input, input_len, flags);
+
 #ifdef DEBUG
         if (((stream_slice.flags & STREAM_TOSERVER) &&
                     stream_slice.offset >= g_eps_applayer_error_offset_ts)) {

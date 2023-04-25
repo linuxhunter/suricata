@@ -40,6 +40,8 @@
 #define APP_LAYER_PARSER_EOF_TC                BIT_U16(6)
 #define APP_LAYER_PARSER_TRUNC_TS              BIT_U16(7)
 #define APP_LAYER_PARSER_TRUNC_TC              BIT_U16(8)
+#define APP_LAYER_PARSER_SFRAME_TS             BIT_U16(9)
+#define APP_LAYER_PARSER_SFRAME_TC             BIT_U16(10)
 
 /* Flags for AppLayerParserProtoCtx. */
 #define APP_LAYER_PARSER_OPT_ACCEPT_GAPS        BIT_U32(0)
@@ -64,7 +66,6 @@
 #define APP_LAYER_TX_RESERVED12_FLAG BIT_U64(59)
 #define APP_LAYER_TX_RESERVED13_FLAG BIT_U64(60)
 #define APP_LAYER_TX_RESERVED14_FLAG BIT_U64(61)
-#define APP_LAYER_TX_RESERVED15_FLAG BIT_U64(62)
 
 #define APP_LAYER_TX_RESERVED_FLAGS                                                                \
     (APP_LAYER_TX_RESERVED1_FLAG | APP_LAYER_TX_RESERVED2_FLAG | APP_LAYER_TX_RESERVED3_FLAG |     \
@@ -73,8 +74,10 @@
             APP_LAYER_TX_RESERVED8_FLAG | APP_LAYER_TX_RESERVED9_FLAG |                            \
             APP_LAYER_TX_RESERVED10_FLAG | APP_LAYER_TX_RESERVED11_FLAG |                          \
             APP_LAYER_TX_RESERVED12_FLAG | APP_LAYER_TX_RESERVED13_FLAG |                          \
-            APP_LAYER_TX_RESERVED14_FLAG | APP_LAYER_TX_RESERVED15_FLAG)
+            APP_LAYER_TX_RESERVED14_FLAG)
 
+/** should inspection be skipped in that direction */
+#define APP_LAYER_TX_SKIP_INSPECT_FLAG BIT_U64(62)
 /** is tx fully inspected? */
 #define APP_LAYER_TX_INSPECTED_FLAG             BIT_U64(63)
 /** other 63 bits are for tracking which prefilter engine is already
@@ -177,8 +180,8 @@ void AppLayerParserRegisterLocalStorageFunc(uint8_t ipproto, AppProto proto,
         void *(*LocalStorageAlloc)(void), void (*LocalStorageFree)(void *));
 // void AppLayerParserRegisterGetEventsFunc(uint8_t ipproto, AppProto proto,
 //     AppLayerDecoderEvents *(*StateGetEvents)(void *) __attribute__((nonnull)));
-void AppLayerParserRegisterGetTxFilesFunc(
-        uint8_t ipproto, AppProto alproto, FileContainer *(*GetTxFiles)(void *, uint8_t));
+void AppLayerParserRegisterGetTxFilesFunc(uint8_t ipproto, AppProto alproto,
+        AppLayerGetFileState (*GetTxFiles)(void *, void *, uint8_t));
 void AppLayerParserRegisterLoggerFuncs(uint8_t ipproto, AppProto alproto,
                          LoggerId (*StateGetTxLogged)(void *, void *),
                          void (*StateSetTxLogged)(void *, void *, LoggerId));
@@ -241,7 +244,8 @@ void AppLayerParserSetTransactionInspectId(const Flow *f, AppLayerParserState *p
 AppLayerDecoderEvents *AppLayerParserGetDecoderEvents(AppLayerParserState *pstate);
 void AppLayerParserSetDecoderEvents(AppLayerParserState *pstate, AppLayerDecoderEvents *devents);
 AppLayerDecoderEvents *AppLayerParserGetEventsByTx(uint8_t ipproto, AppProto alproto, void *tx);
-FileContainer *AppLayerParserGetTxFiles(const Flow *f, void *tx, const uint8_t direction);
+AppLayerGetFileState AppLayerParserGetTxFiles(
+        const Flow *f, void *state, void *tx, const uint8_t direction);
 int AppLayerParserGetStateProgress(uint8_t ipproto, AppProto alproto,
                         void *alstate, uint8_t direction);
 uint64_t AppLayerParserGetTxCnt(const Flow *, void *alstate);

@@ -119,7 +119,7 @@ int OutputRegisterTxLogger(LoggerId id, const char *name, AppProto alproto,
         OutputTxLogger *t = list[alproto];
         while (t->next)
             t = t->next;
-        if (t->id * 2 > UINT32_MAX) {
+        if (t->id * 2ULL > UINT32_MAX) {
             FatalError("Too many loggers registered.");
         }
         op->id = t->id * 2;
@@ -168,8 +168,12 @@ static inline void OutputTxLogFiles(ThreadVars *tv, OutputFileLoggerThreadData *
             opposing_dir == STREAM_TOSERVER ? "TOSERVER" : "TOCLIENT", packet_dir_ready,
             opposing_dir_ready);
 
-    FileContainer *ffc = AppLayerParserGetTxFiles(f, tx, packet_dir);
-    FileContainer *ffc_opposing = AppLayerParserGetTxFiles(f, tx, opposing_dir);
+    AppLayerGetFileState app_files =
+            AppLayerParserGetTxFiles(f, FlowGetAppState(f), tx, packet_dir);
+    FileContainer *ffc = app_files.fc;
+    AppLayerGetFileState app_files_opposing =
+            AppLayerParserGetTxFiles(f, FlowGetAppState(f), tx, opposing_dir);
+    FileContainer *ffc_opposing = app_files_opposing.fc;
 
     /* see if opposing side is finished: if no file support in this direction, of is not
      * files and tx is done for opposing dir. */
@@ -190,8 +194,8 @@ static inline void OutputTxLogFiles(ThreadVars *tv, OutputFileLoggerThreadData *
         SCLogDebug("tx: calling files: ffc %p head %p file_close %d file_trunc %d", ffc, ffc->head,
                 file_close, file_trunc);
         if (filedata_td && txd->files_opened > txd->files_stored)
-            OutputFiledataLogFfc(tv, filedata_td, p, ffc, tx, tx_id, txd, packet_dir, file_close,
-                    file_trunc, packet_dir);
+            OutputFiledataLogFfc(tv, filedata_td, p, app_files, tx, tx_id, txd, packet_dir,
+                    file_close, file_trunc, packet_dir);
         if (file_td && txd->files_opened > txd->files_logged)
             OutputFileLogFfc(
                     tv, file_td, p, ffc, tx, tx_id, txd, file_close, file_trunc, packet_dir);
@@ -204,8 +208,8 @@ static inline void OutputTxLogFiles(ThreadVars *tv, OutputFileLoggerThreadData *
         SCLogDebug("tx: calling for opposing direction files: file_close:%s file_trunc:%s",
                 file_close ? "true" : "false", file_trunc ? "true" : "false");
         if (filedata_td && txd->files_opened > txd->files_stored)
-            OutputFiledataLogFfc(tv, filedata_td, p, ffc_opposing, tx, tx_id, txd, opposing_dir,
-                    file_close, file_trunc, opposing_dir);
+            OutputFiledataLogFfc(tv, filedata_td, p, app_files_opposing, tx, tx_id, txd,
+                    opposing_dir, file_close, file_trunc, opposing_dir);
         if (file_td && txd->files_opened > txd->files_logged)
             OutputFileLogFfc(tv, file_td, p, ffc_opposing, tx, tx_id, txd, file_close, file_trunc,
                     opposing_dir);
@@ -476,6 +480,8 @@ static TmEcode OutputTxLog(ThreadVars *tv, Packet *p, void *thread_data)
                 txd->config.log_flags, logger_expectation);
         if (txd->config.log_flags & BIT_U8(CONFIG_TYPE_TX)) {
             SCLogDebug("SKIP tx %p/%"PRIu64, tx, tx_id);
+            // so that AppLayerParserTransactionsCleanup can clean this tx
+            txd->logged.flags |= logger_expectation;
             goto next_tx;
         }
 

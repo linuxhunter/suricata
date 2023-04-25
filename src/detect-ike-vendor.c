@@ -56,7 +56,7 @@ static int g_ike_vendor_buffer_id = 0;
 
 static InspectionBuffer *IkeVendorGetData(DetectEngineThreadCtx *det_ctx,
         const DetectEngineTransforms *transforms, Flow *f, struct IkeVendorGetDataArgs *cbdata,
-        int list_id, bool first)
+        int list_id)
 {
     SCEnter();
 
@@ -64,12 +64,13 @@ static InspectionBuffer *IkeVendorGetData(DetectEngineThreadCtx *det_ctx,
             InspectionBufferMultipleForListGet(det_ctx, list_id, cbdata->local_id);
     if (buffer == NULL)
         return NULL;
-    if (!first && buffer->inspect != NULL)
+    if (buffer->initialized)
         return buffer;
 
     const uint8_t *data;
     uint32_t data_len;
     if (rs_ike_tx_get_vendor(cbdata->txv, cbdata->local_id, &data, &data_len) == 0) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
     }
 
@@ -98,8 +99,7 @@ static void PrefilterTxIkeVendor(DetectEngineThreadCtx *det_ctx, const void *pec
     uint32_t local_id = 0;
     while (1) {
         struct IkeVendorGetDataArgs cbdata = { local_id, txv };
-        InspectionBuffer *buffer =
-                IkeVendorGetData(det_ctx, ctx->transforms, f, &cbdata, list_id, true);
+        InspectionBuffer *buffer = IkeVendorGetData(det_ctx, ctx->transforms, f, &cbdata, list_id);
         if (buffer == NULL)
             break;
 
@@ -151,7 +151,7 @@ static uint8_t DetectEngineInspectIkeVendor(DetectEngineCtx *de_ctx, DetectEngin
             txv,
         };
         InspectionBuffer *buffer =
-                IkeVendorGetData(det_ctx, transforms, f, &cbdata, engine->sm_list, false);
+                IkeVendorGetData(det_ctx, transforms, f, &cbdata, engine->sm_list);
         if (buffer == NULL || buffer->inspect == NULL)
             break;
 
@@ -204,7 +204,7 @@ void DetectIkeVendorRegister(void)
 
 static int DetectIkeVendorSetup(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    if (DetectBufferSetActiveList(s, g_ike_vendor_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_ike_vendor_buffer_id) < 0)
         return -1;
     if (DetectSignatureSetAppProto(s, ALPROTO_IKE) < 0)
         return -1;

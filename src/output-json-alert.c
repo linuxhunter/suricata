@@ -604,7 +604,9 @@ static void AlertAddFiles(const Packet *p, JsonBuilder *jb, const uint64_t tx_id
     if (p->flow->alstate != NULL) {
         void *tx = AppLayerParserGetTx(p->flow->proto, p->flow->alproto, p->flow->alstate, tx_id);
         if (tx) {
-            ffc = AppLayerParserGetTxFiles(p->flow, tx, direction);
+            AppLayerGetFileState files =
+                    AppLayerParserGetTxFiles(p->flow, p->flow->alstate, tx, direction);
+            ffc = files.fc;
         }
     }
     if (ffc != NULL) {
@@ -682,8 +684,8 @@ static int AlertJson(ThreadVars *tv, JsonAlertLogThread *aft, const Packet *p)
         JsonAddrInfoInit(p, LOG_DIR_PACKET, &addr);
 
         /* Check for XFF, overwriting address info if needed. */
-        HttpXFFCfg *xff_cfg = json_output_ctx->xff_cfg != NULL ?
-            json_output_ctx->xff_cfg : json_output_ctx->parent_xff_cfg;;
+        HttpXFFCfg *xff_cfg = json_output_ctx->xff_cfg != NULL ? json_output_ctx->xff_cfg
+                                                               : json_output_ctx->parent_xff_cfg;
         int have_xff_ip = 0;
         char xff_buffer[XFF_MAXLEN];
         xff_buffer[0] = 0;
@@ -852,7 +854,7 @@ static int AlertJsonDecoderEvent(ThreadVars *tv, JsonAlertLogThread *aft, const 
     if (p->alerts.cnt == 0)
         return TM_ECODE_OK;
 
-    CreateIsoTimeString(&p->ts, timebuf, sizeof(timebuf));
+    CreateIsoTimeString(p->ts, timebuf, sizeof(timebuf));
 
     for (int i = 0; i < p->alerts.cnt; i++) {
         const PacketAlert *pa = &p->alerts.alerts[i];

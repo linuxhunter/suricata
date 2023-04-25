@@ -20,6 +20,7 @@
 // Allow these patterns as its a style we like.
 #![allow(clippy::needless_return)]
 #![allow(clippy::let_and_return)]
+#![allow(clippy::uninlined_format_args)]
 
 // We find this makes sense at time.
 #![allow(clippy::module_inception)]
@@ -31,6 +32,10 @@
 // Something we should be conscious of, but due to interfacing with C
 // is unavoidable at this time.
 #![allow(clippy::too_many_arguments)]
+
+// This would be nice, but having this lint enables causes
+// clippy --fix to make changes that don't meet our MSRV.
+#![allow(clippy::derivable_impls)]
 
 // TODO: All unsafe functions should have a safety doc, even if its
 // just due to FFI.

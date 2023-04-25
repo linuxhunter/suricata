@@ -117,7 +117,7 @@ static void ContainerUrlRangeFree(void *s)
     HttpRangeContainerFile *cu = s;
     SCFree(cu->key);
     cu->key = NULL;
-    FileContainerFree(cu->files);
+    FileContainerFree(cu->files, cu->sbcfg);
     cu->files = NULL;
     RB_FOREACH_SAFE (range, HTTP_RANGES, &cu->fragment_tree, tmp) {
         RB_REMOVE(HTTP_RANGES, &cu->fragment_tree, range);
@@ -127,10 +127,10 @@ static void ContainerUrlRangeFree(void *s)
     }
 }
 
-static inline bool ContainerValueRangeTimeout(HttpRangeContainerFile *cu, struct timeval *ts)
+static inline bool ContainerValueRangeTimeout(HttpRangeContainerFile *cu, const SCTime_t ts)
 {
     // we only timeout if we have no flow referencing us
-    if ((uint32_t)ts->tv_sec > cu->expire || cu->error) {
+    if ((uint32_t)SCTIME_SECS(ts) > cu->expire || cu->error) {
         if (SC_ATOMIC_GET(cu->hdata->use_cnt) == 0) {
             DEBUG_VALIDATE_BUG_ON(cu->files == NULL);
             return true;
@@ -185,7 +185,7 @@ void HttpRangeContainersDestroy(void)
     THashShutdown(ContainerUrlRangeList.ht);
 }
 
-uint32_t HttpRangeContainersTimeoutHash(struct timeval *ts)
+uint32_t HttpRangeContainersTimeoutHash(const SCTime_t ts)
 {
     SCLogDebug("timeout: starting");
     uint32_t cnt = 0;
@@ -237,7 +237,7 @@ uint32_t HttpRangeContainersTimeoutHash(struct timeval *ts)
  */
 static void *HttpRangeContainerUrlGet(const uint8_t *key, uint32_t keylen, const Flow *f)
 {
-    const struct timeval *ts = &f->lastts;
+    const SCTime_t ts = f->lastts;
     HttpRangeContainerFile lookup;
     memset(&lookup, 0, sizeof(lookup));
     // cast so as not to have const in the structure
@@ -246,7 +246,7 @@ static void *HttpRangeContainerUrlGet(const uint8_t *key, uint32_t keylen, const
     struct THashDataGetResult res = THashGetFromHash(ContainerUrlRangeList.ht, &lookup);
     if (res.data) {
         // nothing more to do if (res.is_new)
-        ContainerUrlRangeUpdate(res.data->data, ts->tv_sec + ContainerUrlRangeList.timeout);
+        ContainerUrlRangeUpdate(res.data->data, SCTIME_SECS(ts) + ContainerUrlRangeList.timeout);
         HttpRangeContainerFile *c = res.data->data;
         c->hdata = res.data;
         SCLogDebug("c %p", c);
@@ -351,7 +351,7 @@ static HttpRangeContainerBlock *HttpRangeOpenFile(HttpRangeContainerFile *c, uin
 {
     HttpRangeContainerBlock *r =
             HttpRangeOpenFileAux(c, start, end, total, sbcfg, name, name_len, flags);
-    if (HttpRangeAppendData(r, data, len) < 0) {
+    if (HttpRangeAppendData(sbcfg, r, data, len) < 0) {
         SCLogDebug("Failed to append data while openeing");
     }
     return r;
@@ -367,6 +367,8 @@ HttpRangeContainerBlock *HttpRangeContainerOpenFile(const uint8_t *key, uint32_t
         // probably reached memcap
         return NULL;
     }
+    file_range_container->sbcfg = sbcfg;
+
     HttpRangeContainerBlock *r = HttpRangeOpenFile(file_range_container, crparsed->start,
             crparsed->end, crparsed->size, sbcfg, name, name_len, flags, data, data_len);
     SCLogDebug("s->file_range == %p", r);
@@ -391,7 +393,8 @@ HttpRangeContainerBlock *HttpRangeContainerOpenFile(const uint8_t *key, uint32_t
     return r;
 }
 
-int HttpRangeAppendData(HttpRangeContainerBlock *c, const uint8_t *data, uint32_t len)
+int HttpRangeAppendData(const StreamingBufferConfig *sbcfg, HttpRangeContainerBlock *c,
+        const uint8_t *data, uint32_t len)
 {
     if (len == 0) {
         return 0;
@@ -407,9 +410,9 @@ int HttpRangeAppendData(HttpRangeContainerBlock *c, const uint8_t *data, uint32_
         if (c->files) {
             if (data == NULL) {
                 // gap overlaping already known data
-                r = FileAppendData(c->files, NULL, len - c->toskip);
+                r = FileAppendData(c->files, sbcfg, NULL, len - c->toskip);
             } else {
-                r = FileAppendData(c->files, data + c->toskip, len - c->toskip);
+                r = FileAppendData(c->files, sbcfg, data + c->toskip, len - c->toskip);
             }
         }
         c->toskip = 0;
@@ -418,7 +421,7 @@ int HttpRangeAppendData(HttpRangeContainerBlock *c, const uint8_t *data, uint32_
     // If we are owning the file to append to it, let's do it
     if (c->files) {
         SCLogDebug("update files (FileAppendData)");
-        return FileAppendData(c->files, data, len);
+        return FileAppendData(c->files, sbcfg, data, len);
     }
     // Maybe we were in the skipping case,
     // but we get more data than expected and had set c->toskip = 0
@@ -449,12 +452,13 @@ int HttpRangeAppendData(HttpRangeContainerBlock *c, const uint8_t *data, uint32_
     return 0;
 }
 
-static void HttpRangeFileClose(HttpRangeContainerFile *c, uint16_t flags)
+static void HttpRangeFileClose(
+        const StreamingBufferConfig *sbcfg, HttpRangeContainerFile *c, uint16_t flags)
 {
     SCLogDebug("closing range %p flags %04x", c, flags);
     DEBUG_VALIDATE_BUG_ON(SC_ATOMIC_GET(c->hdata->use_cnt) == 0);
     // move ownership of file c->files->head to caller
-    FileCloseFile(c->files, NULL, 0, c->flags | flags);
+    FileCloseFile(c->files, sbcfg, NULL, 0, c->flags | flags);
     c->files->head = NULL;
     c->files->tail = NULL;
 }
@@ -462,7 +466,7 @@ static void HttpRangeFileClose(HttpRangeContainerFile *c, uint16_t flags)
 /**
  *  \note if `f` is non-NULL, the ownership of the file is transfered to the caller.
  */
-File *HttpRangeClose(HttpRangeContainerBlock *c, uint16_t flags)
+File *HttpRangeClose(const StreamingBufferConfig *sbcfg, HttpRangeContainerBlock *c, uint16_t flags)
 {
     SCLogDebug("c %p c->container %p c->current %p", c, c->container, c->current);
 
@@ -539,16 +543,16 @@ File *HttpRangeClose(HttpRangeContainerBlock *c, uint16_t flags)
             // a new range just begins where we ended, append it
             if (range->gap > 0) {
                 // if the range had a gap, begin by it
-                if (FileAppendData(c->container->files, NULL, range->gap) != 0) {
+                if (FileAppendData(c->container->files, sbcfg, NULL, range->gap) != 0) {
                     c->container->lastsize = f->size;
-                    HttpRangeFileClose(c->container, flags | FILE_TRUNCATED);
+                    HttpRangeFileClose(sbcfg, c->container, flags | FILE_TRUNCATED);
                     c->container->error = true;
                     return f;
                 }
             }
-            if (FileAppendData(c->container->files, range->buffer, range->offset) != 0) {
+            if (FileAppendData(c->container->files, sbcfg, range->buffer, range->offset) != 0) {
                 c->container->lastsize = f->size;
-                HttpRangeFileClose(c->container, flags | FILE_TRUNCATED);
+                HttpRangeFileClose(sbcfg, c->container, flags | FILE_TRUNCATED);
                 c->container->error = true;
                 return f;
             }
@@ -558,19 +562,19 @@ File *HttpRangeClose(HttpRangeContainerBlock *c, uint16_t flags)
             if (overlap < range->offset) {
                 if (range->gap > 0) {
                     // if the range had a gap, begin by it
-                    if (FileAppendData(c->container->files, NULL, range->gap) != 0) {
+                    if (FileAppendData(c->container->files, sbcfg, NULL, range->gap) != 0) {
                         c->container->lastsize = f->size;
-                        HttpRangeFileClose(c->container, flags | FILE_TRUNCATED);
+                        HttpRangeFileClose(sbcfg, c->container, flags | FILE_TRUNCATED);
                         c->container->error = true;
                         return f;
                     }
                 }
                 // And the range ends beyond where we ended
                 // in this case of overlap, only add the extra data
-                if (FileAppendData(c->container->files, range->buffer + overlap,
+                if (FileAppendData(c->container->files, sbcfg, range->buffer + overlap,
                             range->offset - overlap) != 0) {
                     c->container->lastsize = f->size;
-                    HttpRangeFileClose(c->container, flags | FILE_TRUNCATED);
+                    HttpRangeFileClose(sbcfg, c->container, flags | FILE_TRUNCATED);
                     c->container->error = true;
                     return f;
                 }
@@ -587,7 +591,7 @@ File *HttpRangeClose(HttpRangeContainerBlock *c, uint16_t flags)
 
     if (f->size >= c->container->totalsize) {
         // we finished the whole file
-        HttpRangeFileClose(c->container, flags);
+        HttpRangeFileClose(sbcfg, c->container, flags);
     } else {
         // we are expecting more ranges
         f = NULL;
@@ -609,6 +613,9 @@ static void HttpRangeBlockDerefContainer(HttpRangeContainerBlock *b)
 void HttpRangeFreeBlock(HttpRangeContainerBlock *b)
 {
     if (b) {
+        BUG_ON(b->container == NULL && b->files != NULL);
+        const StreamingBufferConfig *sbcfg = b->container ? b->container->sbcfg : NULL;
+
         HttpRangeBlockDerefContainer(b);
 
         if (b->current) {
@@ -619,7 +626,7 @@ void HttpRangeFreeBlock(HttpRangeContainerBlock *b)
         // we did not move ownership of the file container back to HttpRangeContainerFile
         DEBUG_VALIDATE_BUG_ON(b->files != NULL);
         if (b->files != NULL) {
-            FileContainerFree(b->files);
+            FileContainerFree(b->files, sbcfg);
             b->files = NULL;
         }
         SCFree(b);

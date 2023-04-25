@@ -86,7 +86,7 @@ static int g_file_store_enable = 0;
 static uint32_t g_file_store_reassembly_depth = 0;
 
 /* prototypes */
-static void FileFree(File *);
+static void FileFree(File *, const StreamingBufferConfig *cfg);
 static void FileEndSha256(File *ff);
 
 void FileForceFilestoreEnable(void)
@@ -323,9 +323,9 @@ static int FileMagicSize(void)
 uint64_t FileDataSize(const File *file)
 {
     if (file != NULL && file->sb != NULL) {
-        SCLogDebug("returning %"PRIu64,
-                file->sb->stream_offset + file->sb->buf_offset);
-        return file->sb->stream_offset + file->sb->buf_offset;
+        const uint64_t size = StreamingBufferGetConsecutiveDataRightEdge(file->sb);
+        SCLogDebug("returning %" PRIu64, size);
+        return size;
     }
     SCLogDebug("returning 0 (default)");
     return 0;
@@ -360,7 +360,7 @@ uint64_t FileTrackedSize(const File *file)
  *  \retval 1 prune (free) this file
  *  \retval 0 file not ready to be freed
  */
-static int FilePruneFile(File *file)
+static int FilePruneFile(File *file, const StreamingBufferConfig *cfg)
 {
     SCEnter();
 
@@ -392,12 +392,13 @@ static int FilePruneFile(File *file)
         /* if file has inspect window and min size set, we
          * do some house keeping here */
         if (file->inspect_window != 0 && file->inspect_min_size != 0) {
+            const uint64_t file_offset = StreamingBufferGetOffset(file->sb);
             uint32_t window = file->inspect_window;
-            if (file->sb->stream_offset == 0)
+            if (file_offset == 0)
                 window = MAX(window, file->inspect_min_size);
 
             uint64_t file_size = FileDataSize(file);
-            uint64_t data_size = file_size - file->sb->stream_offset;
+            uint64_t data_size = file_size - file_offset;
 
             SCLogDebug("window %"PRIu32", file_size %"PRIu64", data_size %"PRIu64,
                     window, file_size, data_size);
@@ -411,7 +412,7 @@ static int FilePruneFile(File *file)
     }
 
     if (left_edge) {
-        StreamingBufferSlideToOffset(file->sb, left_edge);
+        StreamingBufferSlideToOffset(file->sb, cfg, left_edge);
     }
 
     SCReturnInt(0);
@@ -446,7 +447,7 @@ void FilePrintFlags(const File *file)
 #undef P
 #endif
 
-void FilePrune(FileContainer *ffc)
+static void FilePrune(FileContainer *ffc, const StreamingBufferConfig *cfg)
 {
     SCEnter();
     SCLogDebug("ffc %p head %p", ffc, ffc->head);
@@ -457,7 +458,7 @@ void FilePrune(FileContainer *ffc)
 #ifdef DEBUG
         FilePrintFlags(file);
 #endif
-        if (FilePruneFile(file) == 0) {
+        if (FilePruneFile(file, cfg) == 0) {
             prev = file;
             file = file->next;
             continue;
@@ -475,7 +476,7 @@ void FilePrune(FileContainer *ffc)
         if (file == ffc->tail)
             ffc->tail = prev;
 
-        FileFree(file);
+        FileFree(file, cfg);
         file = file_next;
     }
     SCReturn;
@@ -504,7 +505,7 @@ FileContainer *FileContainerAlloc(void)
  *
  *  \param ffc FileContainer
  */
-void FileContainerRecycle(FileContainer *ffc)
+void FileContainerRecycle(FileContainer *ffc, const StreamingBufferConfig *cfg)
 {
     SCLogDebug("ffc %p", ffc);
     if (ffc == NULL)
@@ -514,7 +515,7 @@ void FileContainerRecycle(FileContainer *ffc)
     File *next = NULL;
     for (;cur != NULL; cur = next) {
         next = cur->next;
-        FileFree(cur);
+        FileFree(cur, cfg);
     }
     ffc->head = ffc->tail = NULL;
 }
@@ -524,7 +525,7 @@ void FileContainerRecycle(FileContainer *ffc)
  *
  *  \param ffc FileContainer
  */
-void FileContainerFree(FileContainer *ffc)
+void FileContainerFree(FileContainer *ffc, const StreamingBufferConfig *cfg)
 {
     SCLogDebug("ffc %p", ffc);
     if (ffc == NULL)
@@ -534,7 +535,7 @@ void FileContainerFree(FileContainer *ffc)
     File *next = NULL;
     for (;ptr != NULL; ptr = next) {
         next = ptr->next;
-        FileFree(ptr);
+        FileFree(ptr, cfg);
     }
     ffc->head = ffc->tail = NULL;
     SCFree(ffc);
@@ -576,7 +577,7 @@ static File *FileAlloc(const uint8_t *name, uint16_t name_len)
     return new;
 }
 
-static void FileFree(File *ff)
+static void FileFree(File *ff, const StreamingBufferConfig *sbcfg)
 {
     SCLogDebug("ff %p", ff);
     if (ff == NULL)
@@ -592,7 +593,7 @@ static void FileFree(File *ff)
         SCFree(ff->magic);
 #endif
     if (ff->sb != NULL) {
-        StreamingBufferFree(ff->sb);
+        StreamingBufferFree(ff->sb, sbcfg);
     }
 
     if (ff->md5_ctx)
@@ -654,10 +655,11 @@ static int FileStoreNoStoreCheck(File *ff)
     SCReturnInt(0);
 }
 
-static int AppendData(File *file, const uint8_t *data, uint32_t data_len)
+static int AppendData(
+        const StreamingBufferConfig *sbcfg, File *file, const uint8_t *data, uint32_t data_len)
 {
     SCLogDebug("file %p data_len %u", file, data_len);
-    if (StreamingBufferAppendNoTrack(file->sb, data, data_len) != 0) {
+    if (StreamingBufferAppendNoTrack(file->sb, sbcfg, data, data_len) != 0) {
         SCLogDebug("file %p StreamingBufferAppendNoTrack failed", file);
         SCReturnInt(-1);
     }
@@ -699,7 +701,8 @@ static void FileFlagGap(File *ff) {
  *  \retval -1 error
  *  \retval -2 no store for this file
  */
-static int FileAppendDataDo(File *ff, const uint8_t *data, uint32_t data_len)
+static int FileAppendDataDo(
+        const StreamingBufferConfig *sbcfg, File *ff, const uint8_t *data, uint32_t data_len)
 {
     SCEnter();
 #ifdef DEBUG_VALIDATION
@@ -750,7 +753,7 @@ static int FileAppendDataDo(File *ff, const uint8_t *data, uint32_t data_len)
 
     SCLogDebug("appending %"PRIu32" bytes", data_len);
 
-    int r = AppendData(ff, data, data_len);
+    int r = AppendData(sbcfg, ff, data, data_len);
     if (r != 0) {
         ff->state = FILE_STATE_ERROR;
         SCReturnInt(r);
@@ -771,14 +774,15 @@ static int FileAppendDataDo(File *ff, const uint8_t *data, uint32_t data_len)
  *  \retval -1 error
  *  \retval -2 no store for this file
  */
-int FileAppendData(FileContainer *ffc, const uint8_t *data, uint32_t data_len)
+int FileAppendData(FileContainer *ffc, const StreamingBufferConfig *sbcfg, const uint8_t *data,
+        uint32_t data_len)
 {
     SCEnter();
 
-    if (ffc == NULL || ffc->tail == NULL || data_len == 0) {
+    if (ffc == NULL || ffc->tail == NULL || data_len == 0 || sbcfg == NULL) {
         SCReturnInt(-1);
     }
-    int r = FileAppendDataDo(ffc->tail, data, data_len);
+    int r = FileAppendDataDo(sbcfg, ffc->tail, data, data_len);
     SCReturnInt(r);
 }
 
@@ -795,7 +799,7 @@ int FileAppendData(FileContainer *ffc, const uint8_t *data, uint32_t data_len)
  *  \retval -1 error
  *  \retval -2 no store for this file
  */
-int FileAppendDataById(FileContainer *ffc, uint32_t track_id,
+int FileAppendDataById(FileContainer *ffc, const StreamingBufferConfig *sbcfg, uint32_t track_id,
         const uint8_t *data, uint32_t data_len)
 {
     SCEnter();
@@ -806,7 +810,7 @@ int FileAppendDataById(FileContainer *ffc, uint32_t track_id,
     File *ff = ffc->head;
     for ( ; ff != NULL; ff = ff->next) {
         if (track_id == ff->file_track_id) {
-            int r = FileAppendDataDo(ff, data, data_len);
+            int r = FileAppendDataDo(sbcfg, ff, data, data_len);
             SCReturnInt(r);
         }
     }
@@ -826,7 +830,7 @@ int FileAppendDataById(FileContainer *ffc, uint32_t track_id,
  *  \retval -1 error
  *  \retval -2 no store for this file
  */
-int FileAppendGAPById(FileContainer *ffc, uint32_t track_id,
+int FileAppendGAPById(FileContainer *ffc, const StreamingBufferConfig *sbcfg, uint32_t track_id,
         const uint8_t *data, uint32_t data_len)
 {
     SCEnter();
@@ -840,7 +844,7 @@ int FileAppendGAPById(FileContainer *ffc, uint32_t track_id,
             FileFlagGap(ff);
             SCLogDebug("FILE_HAS_GAPS set");
 
-            int r = FileAppendDataDo(ff, data, data_len);
+            int r = FileAppendDataDo(sbcfg, ff, data, data_len);
             SCReturnInt(r);
         }
     }
@@ -905,7 +909,7 @@ static File *FileOpenFile(FileContainer *ffc, const StreamingBufferConfig *sbcfg
 
     ff->sb = StreamingBufferInit(sbcfg);
     if (ff->sb == NULL) {
-        FileFree(ff);
+        FileFree(ff, sbcfg);
         SCReturnPtr(NULL, "File");
     }
     SCLogDebug("ff->sb %p", ff->sb);
@@ -960,7 +964,7 @@ static File *FileOpenFile(FileContainer *ffc, const StreamingBufferConfig *sbcfg
 
     ff->size += data_len;
     if (data != NULL) {
-        if (AppendData(ff, data, data_len) != 0) {
+        if (AppendData(sbcfg, ff, data, data_len) != 0) {
             ff->state = FILE_STATE_ERROR;
             SCReturnPtr(NULL, "File");
         }
@@ -988,7 +992,7 @@ int FileOpenFileWithId(FileContainer *ffc, const StreamingBufferConfig *sbcfg,
     return 0;
 }
 
-int FileCloseFilePtr(File *ff, const uint8_t *data,
+int FileCloseFilePtr(File *ff, const StreamingBufferConfig *sbcfg, const uint8_t *data,
         uint32_t data_len, uint16_t flags)
 {
     SCEnter();
@@ -1014,7 +1018,7 @@ int FileCloseFilePtr(File *ff, const uint8_t *data,
                 SCSha256Update(ff->sha256_ctx, data, data_len);
             }
         } else {
-            if (AppendData(ff, data, data_len) != 0) {
+            if (AppendData(sbcfg, ff, data, data_len) != 0) {
                 ff->state = FILE_STATE_ERROR;
                 SCReturnInt(-1);
             }
@@ -1071,7 +1075,7 @@ int FileCloseFilePtr(File *ff, const uint8_t *data,
  *  \retval 0 ok
  *  \retval -1 error
  */
-int FileCloseFile(FileContainer *ffc, const uint8_t *data,
+int FileCloseFile(FileContainer *ffc, const StreamingBufferConfig *sbcfg, const uint8_t *data,
         uint32_t data_len, uint16_t flags)
 {
     SCEnter();
@@ -1080,14 +1084,14 @@ int FileCloseFile(FileContainer *ffc, const uint8_t *data,
         SCReturnInt(-1);
     }
 
-    if (FileCloseFilePtr(ffc->tail, data, data_len, flags) == -1) {
+    if (FileCloseFilePtr(ffc->tail, sbcfg, data, data_len, flags) == -1) {
         SCReturnInt(-1);
     }
 
     SCReturnInt(0);
 }
 
-int FileCloseFileById(FileContainer *ffc, uint32_t track_id,
+int FileCloseFileById(FileContainer *ffc, const StreamingBufferConfig *sbcfg, uint32_t track_id,
         const uint8_t *data, uint32_t data_len, uint16_t flags)
 {
     SCEnter();
@@ -1099,7 +1103,7 @@ int FileCloseFileById(FileContainer *ffc, uint32_t track_id,
     File *ff = ffc->head;
     for ( ; ff != NULL; ff = ff->next) {
         if (track_id == ff->file_track_id) {
-            int r = FileCloseFilePtr(ff, data, data_len, flags);
+            int r = FileCloseFilePtr(ff, sbcfg, data, data_len, flags);
             SCReturnInt(r);
         }
     }
@@ -1183,7 +1187,7 @@ void FileStoreFileById(FileContainer *fc, uint32_t file_id)
     }
 }
 
-void FileTruncateAllOpenFiles(FileContainer *fc)
+static void FileTruncateAllOpenFiles(FileContainer *fc, const StreamingBufferConfig *sbcfg)
 {
     File *ptr = NULL;
 
@@ -1192,10 +1196,18 @@ void FileTruncateAllOpenFiles(FileContainer *fc)
     if (fc != NULL) {
         for (ptr = fc->head; ptr != NULL; ptr = ptr->next) {
             if (ptr->state == FILE_STATE_OPENED) {
-                FileCloseFilePtr(ptr, NULL, 0, FILE_TRUNCATED);
+                FileCloseFilePtr(ptr, sbcfg, NULL, 0, FILE_TRUNCATED);
             }
         }
     }
+}
+
+void FilesPrune(FileContainer *fc, const StreamingBufferConfig *sbcfg, const bool trunc)
+{
+    if (trunc) {
+        FileTruncateAllOpenFiles(fc, sbcfg);
+    }
+    FilePrune(fc, sbcfg);
 }
 
 /**

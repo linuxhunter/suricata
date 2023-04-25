@@ -103,6 +103,7 @@ enum {
     UDP_PKT_TOO_SMALL,  /**< udp packet smaller than minimum size */
     UDP_HLEN_TOO_SMALL, /**< udp header smaller than minimum size */
     UDP_HLEN_INVALID,   /**< invalid len of upd header */
+    UDP_LEN_INVALID,    /**< packet len in header is invalid */
 
     /* SLL EVENTS */
     SLL_PKT_TOO_SMALL, /**< sll packet smaller than minimum size */
@@ -232,8 +233,10 @@ enum {
     STREAM_3WHS_SYNACK_TOSERVER_ON_SYN_RECV,
     STREAM_3WHS_SYNACK_WITH_WRONG_ACK,
     STREAM_3WHS_SYNACK_FLOOD,
+    STREAM_3WHS_SYNACK_TFO_DATA_IGNORED,
     STREAM_3WHS_SYN_RESEND_DIFF_SEQ_ON_SYN_RECV,
     STREAM_3WHS_SYN_TOCLIENT_ON_SYN_RECV,
+    STREAM_3WHS_SYN_FLOOD,
     STREAM_3WHS_WRONG_SEQ_WRONG_ACK,
     STREAM_3WHS_ACK_DATA_INJECT,
     STREAM_4WHS_SYNACK_WITH_WRONG_ACK,
@@ -256,6 +259,7 @@ enum {
     STREAM_EST_SYN_RESEND_DIFF_SEQ,
     STREAM_EST_SYN_TOCLIENT,
     STREAM_EST_INVALID_ACK,
+    STREAM_EST_ACK_ZWP_DATA,
     STREAM_FIN_INVALID_ACK,
     STREAM_FIN1_ACK_WRONG_SEQ,
     STREAM_FIN1_FIN_WRONG_SEQ,

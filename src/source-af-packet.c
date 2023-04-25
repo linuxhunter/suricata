@@ -446,7 +446,7 @@ AFPPeersList peerslist;
 /**
  * \brief Init the global list of ::AFPPeer
  */
-TmEcode AFPPeersListInit()
+TmEcode AFPPeersListInit(void)
 {
     SCEnter();
     TAILQ_INIT(&peerslist.peers);
@@ -463,7 +463,7 @@ TmEcode AFPPeersListInit()
  *
  * \retval TM_ECODE_FAILED if some threads are not peered or TM_ECODE_OK else.
  */
-TmEcode AFPPeersListCheck()
+TmEcode AFPPeersListCheck(void)
 {
 #define AFP_PEERS_MAX_TRY 4
 #define AFP_PEERS_WAIT 20000
@@ -574,7 +574,7 @@ static int AFPPeersListStarted(void)
 /**
  * \brief Clean the global peers list.
  */
-void AFPPeersListClean()
+void AFPPeersListClean(void)
 {
     AFPPeer *pitem;
 
@@ -796,8 +796,7 @@ static void AFPReadFromRingSetupPacket(
     p->afp_v.peer = (p->afp_v.copy_mode == AFP_COPY_MODE_NONE) ? NULL : ptv->mpeer->peer;
 
     /* Timestamp */
-    p->ts.tv_sec = h.h2->tp_sec;
-    p->ts.tv_usec = h.h2->tp_nsec / 1000;
+    p->ts = (SCTime_t){ .secs = h.h2->tp_sec, .usecs = h.h2->tp_nsec / 1000 };
     SCLogDebug("pktlen: %" PRIu32 " (pkt %p, pkt data %p)", GET_PKT_LEN(p), p, GET_PKT_DATA(p));
 
     /* We only check for checksum disable */
@@ -958,8 +957,7 @@ static inline int AFPParsePacketV3(AFPThreadVars *ptv, struct tpacket_block_desc
     p->afp_v.peer = (p->afp_v.copy_mode == AFP_COPY_MODE_NONE) ? NULL : ptv->mpeer->peer;
 
     /* Timestamp */
-    p->ts.tv_sec = ppd->tp_sec;
-    p->ts.tv_usec = ppd->tp_nsec/1000;
+    p->ts = (SCTime_t){ .secs = ppd->tp_sec, .usecs = ppd->tp_nsec / 1000 };
     SCLogDebug("pktlen: %" PRIu32 " (pkt %p, pkt data %p)",
             GET_PKT_LEN(p), p, GET_PKT_DATA(p));
 

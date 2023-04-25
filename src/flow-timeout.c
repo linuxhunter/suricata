@@ -247,8 +247,7 @@ static inline Packet *FlowForceReassemblyPseudoPacketSetup(Packet *p,
                                               (uint16_t *)p->tcph, 20, 0);
     }
 
-    memset(&p->ts, 0, sizeof(struct timeval));
-    TimeGet(&p->ts);
+    p->ts = TimeGet();
 
     if (direction == 0) {
         if (f->alparser && !STREAM_HAS_SEEN_DATA(&ssn->client)) {

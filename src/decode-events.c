@@ -270,6 +270,10 @@ const struct DecodeEvents_ DEvents[] = {
             "decoder.udp.hlen_invalid",
             UDP_HLEN_INVALID,
     },
+    {
+            "decoder.udp.len_invalid",
+            UDP_LEN_INVALID,
+    },
 
     /* SLL EVENTS */
     {
@@ -623,12 +627,20 @@ const struct DecodeEvents_ DEvents[] = {
             STREAM_3WHS_SYNACK_FLOOD,
     },
     {
+            "stream.3whs_synack_tfo_data_ignored",
+            STREAM_3WHS_SYNACK_TFO_DATA_IGNORED,
+    },
+    {
             "stream.3whs_syn_resend_diff_seq_on_syn_recv",
             STREAM_3WHS_SYN_RESEND_DIFF_SEQ_ON_SYN_RECV,
     },
     {
             "stream.3whs_syn_toclient_on_syn_recv",
             STREAM_3WHS_SYN_TOCLIENT_ON_SYN_RECV,
+    },
+    {
+            "stream.3whs_syn_flood",
+            STREAM_3WHS_SYN_FLOOD,
     },
     {
             "stream.3whs_wrong_seq_wrong_ack",
@@ -717,6 +729,10 @@ const struct DecodeEvents_ DEvents[] = {
     {
             "stream.est_invalid_ack",
             STREAM_EST_INVALID_ACK,
+    },
+    {
+            "stream.est_ack_zwp_data",
+            STREAM_EST_ACK_ZWP_DATA,
     },
     {
             "stream.fin_invalid_ack",

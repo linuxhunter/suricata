@@ -62,7 +62,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install cbindgen
         run: cargo install --debug cbindgen
-      - uses: actions/checkout@v3.2.0
+      - uses: actions/checkout@v3.3.0
       - run: ./scripts/bundle.sh
       - run: ./autogen.sh
       - run: ./configure
@@ -71,6 +71,7 @@ jobs:
       - run: |
           diff=$(git diff)
           if [ "${diff}" ]; then
+              echo "${diff}"
               echo "::error ::Clippy --fix made changes, please fix"
               exit 1
           fi

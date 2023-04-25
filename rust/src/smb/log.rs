@@ -260,8 +260,6 @@ fn smb_common_header(jsb: &mut JsonBuilder, state: &SMBState, tx: &SMBTransactio
             }
         },
         Some(SMBTransactionTypeData::TREECONNECT(ref x)) => {
-            jsb.set_uint("tree_id", x.tree_id as u64)?;
-
             let share_name = String::from_utf8_lossy(&x.share_name);
             if x.is_pipe {
                 jsb.set_string("named_pipe", &share_name)?;
@@ -339,9 +337,18 @@ fn smb_common_header(jsb: &mut JsonBuilder, state: &SMBState, tx: &SMBTransactio
                         jsb.set_uint("stub_data_size", x.stub_data_ts.len() as u64)?;
                         jsb.close()?;
                         if let Some(ref ifaces) = state.dcerpc_ifaces {
-                            for i in ifaces {
-                                if i.context_id == x.context_id {
-                                    jsb.open_object("interface")?;
+                            // First filter the interfaces to those
+                            // with the context_id we want to log to
+                            // avoid creating an empty "interfaces"
+                            // array.
+                            let mut ifaces = ifaces
+                                .iter()
+                                .filter(|i| i.context_id == x.context_id)
+                                .peekable();
+                            if ifaces.peek().is_some() {
+                                jsb.open_array("interfaces")?;
+                                for i in ifaces {
+                                    jsb.start_object()?;
                                     let ifstr = uuid::Uuid::from_slice(&i.uuid);
                                     let ifstr = ifstr.map(|ifstr| ifstr.to_hyphenated().to_string()).unwrap();
                                     jsb.set_string("uuid", &ifstr)?;
@@ -349,6 +356,7 @@ fn smb_common_header(jsb: &mut JsonBuilder, state: &SMBState, tx: &SMBTransactio
                                     jsb.set_string("version", &vstr)?;
                                     jsb.close()?;
                                 }
+                                jsb.close()?;
                             }
                         }
                     },

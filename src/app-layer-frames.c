@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2021 Open Information Security Foundation
+/* Copyright (C) 2007-2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -30,30 +30,72 @@
 #include "app-layer-frames.h"
 #include "app-layer-parser.h"
 
+struct FrameConfig {
+    SC_ATOMIC_DECLARE(uint64_t, types);
+};
+static struct FrameConfig frame_config[ALPROTO_MAX];
+
+void FrameConfigInit(void)
+{
+    for (AppProto p = 0; p < ALPROTO_MAX; p++) {
+        SC_ATOMIC_INIT(frame_config[p].types);
+    }
+}
+
+void FrameConfigEnableAll(void)
+{
+    const uint64_t bits = UINT64_MAX;
+    for (AppProto p = 0; p < ALPROTO_MAX; p++) {
+        struct FrameConfig *fc = &frame_config[p];
+        SC_ATOMIC_OR(fc->types, bits);
+    }
+}
+
+void FrameConfigEnable(const AppProto p, const uint8_t type)
+{
+    const uint64_t bits = BIT_U64(type);
+    struct FrameConfig *fc = &frame_config[p];
+    SC_ATOMIC_OR(fc->types, bits);
+}
+
+static inline bool FrameConfigTypeIsEnabled(const AppProto p, const uint8_t type)
+{
+    struct FrameConfig *fc = &frame_config[p];
+    const uint64_t bits = BIT_U64(type);
+    const bool enabled = (SC_ATOMIC_GET(fc->types) & bits) != 0;
+    return enabled;
+}
+
 static void FrameDebug(const char *prefix, const Frames *frames, const Frame *frame)
 {
 #ifdef DEBUG
-    const char *type_name =
-            frames ? AppLayerParserGetFrameNameById(frames->ipproto, frames->alproto, frame->type)
-                   : "<unknown>";
-    SCLogDebug("[%s] %p: frame: %p type %u/%s id %" PRIi64 " flags %02x rel_offset:%" PRIi64
-               ", len:%" PRIi64 ", events:%u %u/%u/%u/%u",
-            prefix, frames, frame, frame->type, type_name, frame->id, frame->flags,
-            frame->rel_offset, frame->len, frame->event_cnt, frame->events[0], frame->events[1],
-            frame->events[2], frame->events[3]);
+    const char *type_name = "unknown";
+    if (frame->type == FRAME_STREAM_TYPE) {
+        type_name = "stream";
+    } else if (frames != NULL) {
+        type_name = AppLayerParserGetFrameNameById(frames->ipproto, frames->alproto, frame->type);
+    }
+    SCLogDebug("[%s] %p: frame:%p type:%u/%s id:%" PRIi64 " flags:%02x offset:%" PRIu64
+               ", len:%" PRIi64 ", inspect_progress:%" PRIu64 ", events:%u %u/%u/%u/%u",
+            prefix, frames, frame, frame->type, type_name, frame->id, frame->flags, frame->offset,
+            frame->len, frame->inspect_progress, frame->event_cnt, frame->events[0],
+            frame->events[1], frame->events[2], frame->events[3]);
 #endif
 }
 
 Frame *FrameGetById(Frames *frames, const int64_t id)
 {
+    SCLogDebug("frames %p cnt %u, looking for %" PRIi64, frames, frames->cnt, id);
     for (uint16_t i = 0; i < frames->cnt; i++) {
         if (i < FRAMES_STATIC_CNT) {
             Frame *frame = &frames->sframes[i];
+            FrameDebug("get_by_id(static)", frames, frame);
             if (frame->id == id)
                 return frame;
         } else {
             const uint16_t o = i - FRAMES_STATIC_CNT;
             Frame *frame = &frames->dframes[o];
+            FrameDebug("get_by_id(dynamic)", frames, frame);
             if (frame->id == id)
                 return frame;
         }
@@ -78,16 +120,13 @@ Frame *FrameGetByIndex(Frames *frames, const uint32_t idx)
     }
 }
 
-// TODO review rel_offset logic. App-layer passes STREAM_APP_PROGRESS as
-// offset, but I think we're using rel_offset relative to BASE_PROGRESS
-// here which changes only on slide.
-static Frame *FrameNew(Frames *frames, int64_t rel_offset, int64_t len)
+static Frame *FrameNew(Frames *frames, uint64_t offset, int64_t len)
 {
     BUG_ON(frames == NULL);
 
     if (frames->cnt < FRAMES_STATIC_CNT) {
         Frame *frame = &frames->sframes[frames->cnt];
-        frames->sframes[frames->cnt].rel_offset = rel_offset;
+        frames->sframes[frames->cnt].offset = offset;
         frames->sframes[frames->cnt].len = len;
         frames->sframes[frames->cnt].id = ++frames->base_id;
         frames->cnt++;
@@ -104,7 +143,7 @@ static Frame *FrameNew(Frames *frames, int64_t rel_offset, int64_t len)
         BUG_ON(frames->cnt != FRAMES_STATIC_CNT + 1);
 
         frames->dyn_size = 8;
-        frames->dframes[0].rel_offset = rel_offset;
+        frames->dframes[0].offset = offset;
         frames->dframes[0].len = len;
         frames->dframes[0].id = ++frames->base_id;
         return &frames->dframes[0];
@@ -141,7 +180,7 @@ static Frame *FrameNew(Frames *frames, int64_t rel_offset, int64_t len)
         }
 
         frames->cnt++;
-        frames->dframes[dyn_cnt].rel_offset = rel_offset;
+        frames->dframes[dyn_cnt].offset = offset;
         frames->dframes[dyn_cnt].len = len;
         frames->dframes[dyn_cnt].id = ++frames->base_id;
         return &frames->dframes[dyn_cnt];
@@ -174,19 +213,15 @@ static void AppLayerFrameDumpForFrames(const char *prefix, const Frames *frames)
     SCLogDebug("prefix: %s", prefix);
 }
 
-static inline uint64_t FrameLeftEdge(
-        const TcpStream *stream, const Frame *frame, const int64_t base_offset)
+static inline uint64_t FrameLeftEdge(const TcpStream *stream, const Frame *frame)
 {
     const int64_t app_progress = STREAM_APP_PROGRESS(stream);
-    BUG_ON(base_offset > app_progress);
 
-    const int64_t frame_offset = base_offset + frame->rel_offset;
+    const int64_t frame_offset = frame->offset;
     const int64_t frame_data = app_progress - frame_offset;
 
-    SCLogDebug("base_offset %" PRIi64 ", app_progress %" PRIi64, base_offset, app_progress);
     SCLogDebug("frame_offset %" PRIi64 ", frame_data %" PRIi64 ", frame->len %" PRIi64,
             frame_offset, frame_data, frame->len);
-    BUG_ON(frame_offset < 0);
     BUG_ON(frame_offset > app_progress);
 
     /* length unknown, make sure to have at least 2500 */
@@ -234,19 +269,19 @@ static inline uint64_t FrameLeftEdge(
  *
  *  [ stream ]
  *    [ frame   ...........]
- *      rel_offset: 2
+ *      offset: 2
  *      len: 19
  *
  *  Slide:
  *         [ stream ]
  *    [ frame ....          .]
- *      rel_offset: -10
+ *      offset: 2
  *       len: 19
  *
  *  Slide:
  *                [ stream ]
  *    [ frame ...........    ]
- *      rel_offset: -16
+ *      offset: 2
  *      len: 19
  */
 static int FrameSlide(const char *ds, Frames *frames, const TcpStream *stream, const uint32_t slide)
@@ -266,8 +301,7 @@ static int FrameSlide(const char *ds, Frames *frames, const TcpStream *stream, c
         if (i < FRAMES_STATIC_CNT) {
             Frame *frame = &frames->sframes[i];
             FrameDebug("slide(s)", frames, frame);
-            if (frame->len >= 0 &&
-                    frame->rel_offset + frame->len <= (int64_t)slide) { // TODO check seems off
+            if (frame->len >= 0 && frame->offset + frame->len <= next_base) {
                 // remove by not incrementing 'x'
                 SCLogDebug("removing %p id %" PRIi64, frame, frame->id);
                 FrameClean(frame);
@@ -275,18 +309,17 @@ static int FrameSlide(const char *ds, Frames *frames, const TcpStream *stream, c
             } else {
                 Frame *nframe = &frames->sframes[x];
                 FrameCopy(nframe, frame);
-                nframe->rel_offset -= slide; /* turns negative if start if before window */
                 if (frame != nframe) {
                     FrameClean(frame);
                 }
-                le = MIN(le, FrameLeftEdge(stream, nframe, next_base));
+                le = MIN(le, FrameLeftEdge(stream, nframe));
                 x++;
             }
         } else {
             const uint16_t o = i - FRAMES_STATIC_CNT;
             Frame *frame = &frames->dframes[o];
             FrameDebug("slide(d)", frames, frame);
-            if (frame->len >= 0 && frame->rel_offset + frame->len <= (int64_t)slide) {
+            if (frame->len >= 0 && frame->offset + frame->len <= next_base) {
                 // remove by not incrementing 'x'
                 SCLogDebug("removing %p id %" PRIi64, frame, frame->id);
                 FrameClean(frame);
@@ -299,11 +332,10 @@ static int FrameSlide(const char *ds, Frames *frames, const TcpStream *stream, c
                     nframe = &frames->sframes[x];
                 }
                 FrameCopy(nframe, frame);
-                nframe->rel_offset -= slide; /* turns negative if start is before window */
                 if (frame != nframe) {
                     FrameClean(frame);
                 }
-                le = MIN(le, FrameLeftEdge(stream, nframe, next_base));
+                le = MIN(le, FrameLeftEdge(stream, nframe));
                 x++;
             }
         }
@@ -384,10 +416,13 @@ void FramesFree(Frames *frames)
 Frame *AppLayerFrameNewByPointer(Flow *f, const StreamSlice *stream_slice,
         const uint8_t *frame_start, const int64_t len, int dir, uint8_t frame_type)
 {
-    SCLogDebug("stream_slice offset %" PRIu64, stream_slice->offset);
-    SCLogDebug("frame_start %p stream_slice->input %p", frame_start, stream_slice->input);
+    SCLogDebug("frame_start:%p stream_slice->input:%p stream_slice->offset:%" PRIu64, frame_start,
+            stream_slice->input, stream_slice->offset);
 
-    /* workarounds for many (unit|fuzz)tests not handling TCP data properly */
+    if (!(FrameConfigTypeIsEnabled(f->alproto, frame_type)))
+        return NULL;
+
+        /* workarounds for many (unit|fuzz)tests not handling TCP data properly */
 #if defined(UNITTESTS) || defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     if (f->proto == IPPROTO_TCP && f->protoctx == NULL)
         return NULL;
@@ -412,23 +447,19 @@ Frame *AppLayerFrameNewByPointer(Flow *f, const StreamSlice *stream_slice,
     if (frames_container == NULL)
         return NULL;
 
-    TcpStream *stream;
-    TcpSession *ssn = f->protoctx;
     Frames *frames;
     if (dir == 0) {
         frames = &frames_container->toserver;
-        stream = &ssn->client;
     } else {
         frames = &frames_container->toclient;
-        stream = &ssn->server;
     }
 
-    int64_t abs_frame_offset = stream_slice->offset + (int64_t)ptr_offset;
-    int64_t rel_offset = abs_frame_offset - STREAM_BASE_OFFSET(stream);
+    uint64_t abs_frame_offset = stream_slice->offset + ptr_offset;
 
-    Frame *r = FrameNew(frames, rel_offset, len);
+    Frame *r = FrameNew(frames, abs_frame_offset, len);
     if (r != NULL) {
         r->type = frame_type;
+        FrameDebug("new_by_ptr", frames, r);
     }
     return r;
 }
@@ -437,6 +468,9 @@ static Frame *AppLayerFrameUdp(Flow *f, const StreamSlice *stream_slice,
         const uint32_t frame_start_rel, const int64_t len, int dir, uint8_t frame_type)
 {
     BUG_ON(f->proto != IPPROTO_UDP);
+
+    if (!(FrameConfigTypeIsEnabled(f->alproto, frame_type)))
+        return NULL;
 
     FramesContainer *frames_container = AppLayerFramesSetupContainer(f);
     if (frames_container == NULL)
@@ -461,7 +495,10 @@ static Frame *AppLayerFrameUdp(Flow *f, const StreamSlice *stream_slice,
 Frame *AppLayerFrameNewByRelativeOffset(Flow *f, const StreamSlice *stream_slice,
         const uint32_t frame_start_rel, const int64_t len, int dir, uint8_t frame_type)
 {
-    /* workarounds for many (unit|fuzz)tests not handling TCP data properly */
+    if (!(FrameConfigTypeIsEnabled(f->alproto, frame_type)))
+        return NULL;
+
+        /* workarounds for many (unit|fuzz)tests not handling TCP data properly */
 #if defined(UNITTESTS) || defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     if (f->proto == IPPROTO_TCP && f->protoctx == NULL)
         return NULL;
@@ -481,42 +518,21 @@ Frame *AppLayerFrameNewByRelativeOffset(Flow *f, const StreamSlice *stream_slice
     if (frames_container == NULL)
         return NULL;
 
-    TcpStream *stream;
-    TcpSession *ssn = f->protoctx;
     Frames *frames;
     if (dir == 0) {
         frames = &frames_container->toserver;
-        stream = &ssn->client;
     } else {
         frames = &frames_container->toclient;
-        stream = &ssn->server;
     }
 
-    const uint64_t base = STREAM_BASE_OFFSET(stream);
-#ifdef DEBUG
-    const uint64_t app = STREAM_APP_PROGRESS(stream);
-    const uint64_t app_offset = app - base;
-    const uint64_t slice_offset = stream_slice->offset - base;
-
-    SCLogDebug("app %" PRIu64 ", base %" PRIu64 ", slice %" PRIu64, app, base, slice_offset);
-    SCLogDebug("app_offset %" PRIu64 ", slice_offset %" PRIu64, app_offset, slice_offset);
-#endif
     const uint64_t frame_abs_offset = (uint64_t)frame_start_rel + stream_slice->offset;
-    const uint64_t frame_base_offset = frame_abs_offset - base;
-
-    SCLogDebug("frame_start_rel %u frame_abs_offset %" PRIu64 ", frame_base_offset %" PRIu64,
-            frame_start_rel, frame_abs_offset, frame_base_offset);
-
-    int64_t rel_offset = frame_base_offset;
-#ifdef DEBUG
-    const char *type_name = AppLayerParserGetFrameNameById(f->proto, f->alproto, frame_type);
-    SCLogDebug("flow %p direction %s frame offset %u rel_offset %" PRIi64 " (abs %" PRIu64
-               ") starting at %" PRIu64 " len %" PRIi64 " (offset %" PRIu64 ") type %u/%s",
-            f, dir == 0 ? "toserver" : "toclient", frame_start_rel, rel_offset, frame_abs_offset,
-            frame_abs_offset, len, stream_slice->offset, frame_type, type_name);
+#ifdef DEBUG_VALIDATION
+    const TcpSession *ssn = f->protoctx;
+    const TcpStream *stream = dir == 0 ? &ssn->client : &ssn->server;
+    BUG_ON(stream_slice->offset != STREAM_APP_PROGRESS(stream));
+    BUG_ON(frame_abs_offset > STREAM_APP_PROGRESS(stream) + stream_slice->input_len);
 #endif
-
-    Frame *r = FrameNew(frames, rel_offset, len);
+    Frame *r = FrameNew(frames, frame_abs_offset, len);
     if (r != NULL) {
         r->type = frame_type;
     }
@@ -539,7 +555,10 @@ void AppLayerFrameDump(Flow *f)
 Frame *AppLayerFrameNewByAbsoluteOffset(Flow *f, const StreamSlice *stream_slice,
         const uint64_t frame_start, const int64_t len, int dir, uint8_t frame_type)
 {
-    /* workarounds for many (unit|fuzz)tests not handling TCP data properly */
+    if (!(FrameConfigTypeIsEnabled(f->alproto, frame_type)))
+        return NULL;
+
+        /* workarounds for many (unit|fuzz)tests not handling TCP data properly */
 #if defined(UNITTESTS) || defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
     if (f->proto == IPPROTO_TCP && f->protoctx == NULL)
         return NULL;
@@ -557,25 +576,18 @@ Frame *AppLayerFrameNewByAbsoluteOffset(Flow *f, const StreamSlice *stream_slice
     if (frames_container == NULL)
         return NULL;
 
-    TcpSession *ssn = f->protoctx;
-    TcpStream *stream;
     Frames *frames;
     if (dir == 0) {
-        stream = &ssn->client;
         frames = &frames_container->toserver;
     } else {
-        stream = &ssn->server;
         frames = &frames_container->toclient;
     }
 
-    const uint64_t frame_start_rel = frame_start - STREAM_BASE_OFFSET(stream);
-#ifdef DEBUG
-    SCLogDebug("flow %p direction %s frame offset %" PRIu64 " (abs %" PRIu64
-               ") starting at %" PRIu64 " len %" PRIi64 " (offset %" PRIu64 ")",
-            f, dir == 0 ? "toserver" : "toclient", frame_start_rel, frame_start, frame_start, len,
+    SCLogDebug("flow %p direction %s frame type %u offset %" PRIu64 " len %" PRIi64
+               " (slice offset %" PRIu64 ")",
+            f, dir == 0 ? "toserver" : "toclient", frame_type, frame_start, len,
             stream_slice->offset);
-#endif
-    Frame *r = FrameNew(frames, (uint32_t)frame_start_rel, len);
+    Frame *r = FrameNew(frames, frame_start, len);
     if (r != NULL) {
         r->type = frame_type;
     }
@@ -639,6 +651,8 @@ void AppLayerFrameSetTxIdById(Flow *f, const int dir, const FrameId id, uint64_t
 Frame *AppLayerFrameGetById(Flow *f, const int dir, const FrameId frame_id)
 {
     FramesContainer *frames_container = AppLayerFramesGetContainer(f);
+    SCLogDebug("get frame_id %" PRIi64 " direction %u/%s frames_container %p", frame_id, dir,
+            dir == 0 ? "toserver" : "toclient", frames_container);
     if (frames_container == NULL)
         return NULL;
 
@@ -648,6 +662,7 @@ Frame *AppLayerFrameGetById(Flow *f, const int dir, const FrameId frame_id)
     } else {
         frames = &frames_container->toclient;
     }
+    SCLogDebug("frames %p", frames);
     return FrameGetById(frames, frame_id);
 }
 
@@ -658,7 +673,7 @@ static inline bool FrameIsDone(
     if (frame->len < 0)
         return false;
 
-    const int64_t frame_abs_offset = (int64_t)abs_offset + frame->rel_offset;
+    const int64_t frame_abs_offset = frame->offset;
     const int64_t frame_right_edge = frame_abs_offset + frame->len;
     if ((uint64_t)frame_right_edge <= abs_right_edge) {
         SCLogDebug("frame %p id %" PRIi64 " is done", frame, frame->id);
@@ -691,7 +706,7 @@ static void FramePrune(Frames *frames, const TcpStream *stream, const bool eof)
                 FrameClean(frame);
                 removed++;
             } else {
-                const uint64_t fle = FrameLeftEdge(stream, frame, STREAM_BASE_OFFSET(stream));
+                const uint64_t fle = FrameLeftEdge(stream, frame);
                 le = MIN(le, fle);
                 SCLogDebug("le %" PRIu64 ", frame fle %" PRIu64, le, fle);
                 Frame *nframe = &frames->sframes[x];
@@ -712,7 +727,7 @@ static void FramePrune(Frames *frames, const TcpStream *stream, const bool eof)
                 FrameClean(frame);
                 removed++;
             } else {
-                const uint64_t fle = FrameLeftEdge(stream, frame, STREAM_BASE_OFFSET(stream));
+                const uint64_t fle = FrameLeftEdge(stream, frame);
                 le = MIN(le, fle);
                 SCLogDebug("le %" PRIu64 ", frame fle %" PRIu64, le, fle);
                 Frame *nframe;

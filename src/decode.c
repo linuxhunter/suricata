@@ -329,8 +329,7 @@ Packet *PacketTunnelPktSetup(ThreadVars *tv, DecodeThreadVars *dtv, Packet *pare
     p->recursion_level = parent->recursion_level + 1;
     DEBUG_VALIDATE_BUG_ON(parent->nb_decoded_layers >= decoder_max_layers);
     p->nb_decoded_layers = parent->nb_decoded_layers + 1;
-    p->ts.tv_sec = parent->ts.tv_sec;
-    p->ts.tv_usec = parent->ts.tv_usec;
+    p->ts = parent->ts;
     p->datalink = DLT_RAW;
     p->tenant_id = parent->tenant_id;
     p->livedev = parent->livedev;
@@ -408,8 +407,7 @@ Packet *PacketDefragPktSetup(Packet *parent, const uint8_t *pkt, uint32_t len, u
         PacketCopyData(p, pkt, len);
     }
     p->recursion_level = parent->recursion_level; /* NOT incremented */
-    p->ts.tv_sec = parent->ts.tv_sec;
-    p->ts.tv_usec = parent->ts.tv_usec;
+    p->ts = parent->ts;
     p->datalink = DLT_RAW;
     p->tenant_id = parent->tenant_id;
     /* tell new packet it's part of a tunnel */
@@ -534,6 +532,8 @@ void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
     dtv->counter_ipv4 = StatsRegisterCounter("decoder.ipv4", tv);
     dtv->counter_ipv6 = StatsRegisterCounter("decoder.ipv6", tv);
     dtv->counter_eth = StatsRegisterCounter("decoder.ethernet", tv);
+    dtv->counter_arp = StatsRegisterCounter("decoder.arp", tv);
+    dtv->counter_ethertype_unknown = StatsRegisterCounter("decoder.unknown_ethertype", tv);
     dtv->counter_chdlc = StatsRegisterCounter("decoder.chdlc", tv);
     dtv->counter_raw = StatsRegisterCounter("decoder.raw", tv);
     dtv->counter_null = StatsRegisterCounter("decoder.null", tv);
@@ -740,7 +740,7 @@ inline int PacketSetData(Packet *p, const uint8_t *pktdata, uint32_t pktlen)
 
 const char *PktSrcToString(enum PktSrcEnum pkt_src)
 {
-    const char *pkt_src_str = "<unknown>";
+    const char *pkt_src_str = NULL;
     switch (pkt_src) {
         case PKT_SRC_WIRE:
             pkt_src_str = "wire/pcap";
@@ -779,6 +779,7 @@ const char *PktSrcToString(enum PktSrcEnum pkt_src)
             pkt_src_str = "capture timeout flush";
             break;
     }
+    DEBUG_VALIDATE_BUG_ON(pkt_src_str == NULL);
     return pkt_src_str;
 }
 

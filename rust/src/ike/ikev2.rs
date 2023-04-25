@@ -113,7 +113,7 @@ pub fn handle_ikev2(
         length: isakmp_header.length,
     };
 
-    let mut tx = state.new_tx();
+    let mut tx = state.new_tx(direction);
     tx.ike_version = 2;
     // use init_spi as transaction identifier
     // tx.xid = hdr.init_spi; todo is this used somewhere?

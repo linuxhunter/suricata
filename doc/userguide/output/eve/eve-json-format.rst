@@ -1210,13 +1210,15 @@ NTLMSSP fields
 * "domain" (string): the Windows domain.
 * "user" (string): the user.
 * "host" (string): the host.
+* "version" (string): the client version.
 
 Example::
 
     "ntlmssp": {
       "domain": "VNET3",
       "user": "administrator",
-      "host": "BLU"
+      "host": "BLU",
+      "version": "60.230 build 13699 rev 188"
     }
 
 More complete example::
@@ -1232,7 +1234,8 @@ More complete example::
     "ntlmssp": {
       "domain": "VNET3",
       "user": "administrator",
-      "host": "BLU"
+      "host": "BLU",
+      "version": "60.230 build 13699 rev 188"
     },
     "request": {
       "native_os": "Unix",
@@ -2460,4 +2463,73 @@ Example of QUIC logging with a CYU hash:
             "string": "46,PAD-SNI-STK-SNO-VER-CCS-NONC-AEAD-UAID-SCID-TCID-PDMD-SMHL-ICSL-NONP-PUBS-MIDS-SCLS-KEXS-XLCT-CSCT-COPT-CCRT-IRTT-CFCW-SFCW"
         }
     ]
+  }
+
+Event type: DHCP
+-----------------
+
+The default DHCP logging level only logs enough information to map a
+MAC address to an IP address. Enable extended mode to log all DHCP
+message types in full detail.
+
+Fields
+~~~~~~
+
+* "type": message type (e.g. request, reply)
+* "id": DHCP transaction id
+* "client_mac": client MAC address
+* "assigned_ip": IP address given by DHCP server
+* "client_ip": client IP address
+* "dhcp_type": DHCP message type
+* "client_id": DHCP client identifier
+* "hostname": DHCP client host name
+* "params": DHCP parameter request list
+* "requested_ip": DHCP client requesting specific IP address
+* "relay_ip": BOOTP relay agent IP address
+* "next_server_ip": BOOTP next IP address to use for booting process
+* "subnet_mask": subnet mask to use with client IP address
+* "routers": IP address(es) to be used as default gateways on DHCP client
+* "lease_time": Duration of IP address assignment to client
+* "renewal_time": Time in seconds since client began IP address request or renewal process
+* "rebinding_time": Time in seconds before the client begins to renew its IP address lease
+* "dns_servers": IP address(es) of servers the client will use for DNS queries
+
+Examples
+~~~~~~~~
+
+Example of DHCP log entry (default logging level):
+
+::
+
+  "dhcp": {
+    "type":"reply",
+    "id":755466399,
+    "client_mac":"54:ee:75:51:e0:66",
+    "assigned_ip":"100.78.202.125",
+    "dhcp_type":"ack",
+    "renewal_time":21600,
+    "client_id":"54:ee:75:51:e0:66"
+  }
+
+Example of DHCP log entry (extended logging enabled):
+
+::
+
+  "dhcp": {
+    "type":"reply",
+    "id":2787908432,
+    "client_mac":"54:ee:75:51:e0:66",
+    "assigned_ip":"192.168.1.120",
+    "client_ip":"0.0.0.0",
+    "relay_ip":"192.168.1.1",
+    "next_server_ip":"0.0.0.0",
+    "dhcp_type":"offer",
+    "subnet_mask":"255.255.255.0",
+    "routers":["192.168.1.100"],
+    "hostname":"test",
+    "lease_time":86400,
+    "renewal_time":21600,
+    "rebinding_time":43200,
+    "client_id":"54:ee:75:51:e0:66",
+    "dns_servers":["192.168.1.50","192.168.1.49"]
   }

@@ -75,7 +75,9 @@ struct SCSigSignatureWrapper_;
  * These codes are access points to particular lists in the array
  * Signature->sm_lists[DETECT_SM_LIST_MAX]. */
 enum DetectSigmatchListEnum {
+    /* list for non-payload per packet matches, e.g. ttl, flow keyword */
     DETECT_SM_LIST_MATCH = 0,
+    /* list for payload and stream match */
     DETECT_SM_LIST_PMATCH,
 
     /* base64_data keyword uses some hardcoded logic so consider
@@ -338,6 +340,7 @@ typedef struct InspectionBuffer {
     const uint8_t *inspect; /**< active pointer, points either to ::buf or ::orig */
     uint64_t inspect_offset;
     uint32_t inspect_len;   /**< size of active data. See to ::len or ::orig_len */
+    bool initialized; /**< is initialized. ::inspect might be NULL if transform lead to 0 size */
     uint8_t flags;          /**< DETECT_CI_FLAGS_* for use with DetectEngineContentInspection */
 #ifdef DEBUG_VALIDATION
     bool multi;
@@ -462,7 +465,7 @@ struct DetectEngineFrameInspectionEngine;
  */
 typedef int (*InspectionBufferFrameInspectFunc)(struct DetectEngineThreadCtx_ *,
         const struct DetectEngineFrameInspectionEngine *engine, const struct Signature_ *s,
-        Packet *p, const struct Frames *frames, const struct Frame *frame, const uint32_t idx);
+        Packet *p, const struct Frames *frames, const struct Frame *frame);
 
 typedef struct DetectEngineFrameInspectionEngine {
     AppProto alproto;
@@ -701,11 +704,6 @@ typedef struct SCFPSupportSMList_ {
     struct SCFPSupportSMList_ *next;
 } SCFPSupportSMList;
 
-typedef struct DetectEngineIPOnlyThreadCtx_ {
-    uint8_t *sig_match_array; /* bit array of sig nums */
-    uint32_t sig_match_size;  /* size in bytes of the array */
-} DetectEngineIPOnlyThreadCtx;
-
 /** \brief IP only rules matching ctx. */
 typedef struct DetectEngineIPOnlyCtx_ {
     /* Lookup trees */
@@ -715,6 +713,11 @@ typedef struct DetectEngineIPOnlyCtx_ {
     /* Used to build the radix trees */
     IPOnlyCIDRItem *ip_src, *ip_dst;
     uint32_t max_idx;
+
+    /* Used to map large signums to smaller values to compact the bitsets
+     * stored in the radix trees */
+    uint32_t *sig_mapping;
+    uint32_t sig_mapping_size;
 } DetectEngineIPOnlyCtx;
 
 typedef struct DetectEngineLookupFlow_ {
@@ -1096,6 +1099,8 @@ typedef struct DetectEngineThreadCtx_ {
     /** ID of the transaction currently being inspected. */
     uint64_t tx_id;
     int64_t frame_id;
+    uint64_t frame_inspect_progress; /**< used to set Frame::inspect_progress after all inspection
+                                        on a frame is complete. */
     Packet *p;
 
     uint16_t alert_queue_size;
@@ -1133,9 +1138,6 @@ typedef struct DetectEngineThreadCtx_ {
     /** SPM thread context used for scanning. This has been cloned from the
      * prototype held by DetectEngineCtx. */
     SpmThreadCtx *spm_thread_ctx;
-
-    /** ip only rules ctx */
-    DetectEngineIPOnlyThreadCtx io_ctx;
 
     /* byte_* values */
     uint64_t *byte_values;
@@ -1289,13 +1291,13 @@ typedef struct MpmStore_ {
     enum MpmBuiltinBuffers buffer;
     int sm_list;
     int32_t sgh_mpm_context;
-
+    AppProto alproto;
     MpmCtx *mpm_ctx;
 
 } MpmStore;
 
 typedef void (*PrefilterFrameFn)(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p,
-        const struct Frames *frames, const struct Frame *frame, const uint32_t idx);
+        const struct Frames *frames, const struct Frame *frame);
 
 typedef struct AppLayerTxData AppLayerTxData;
 typedef void (*PrefilterTxFn)(DetectEngineThreadCtx *det_ctx, const void *pectx, Packet *p, Flow *f,

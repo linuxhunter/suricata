@@ -133,13 +133,13 @@ static void FrameAddPayloadTCP(JsonBuilder *js, const TcpStream *stream, const F
 
     // TODO consider ACK'd
 
-    if (frame->rel_offset < 0) {
+    if (frame->offset < STREAM_BASE_OFFSET(stream)) {
         if (StreamingBufferGetData(&stream->sb, &data, &sb_data_len, &data_offset) == 0) {
             SCLogDebug("NO DATA1");
             return;
         }
     } else {
-        data_offset = (uint64_t)(frame->rel_offset + (int64_t)STREAM_BASE_OFFSET(stream));
+        data_offset = (uint64_t)frame->offset;
         SCLogDebug("data_offset %" PRIu64, data_offset);
         if (StreamingBufferGetDataAtOffset(
                     &stream->sb, &data, &sb_data_len, (uint64_t)data_offset) == 0) {
@@ -158,8 +158,13 @@ static void FrameAddPayloadTCP(JsonBuilder *js, const TcpStream *stream, const F
     SCLogDebug("frame data_offset %" PRIu64 ", data_len %u frame len %" PRIi64, data_offset,
             sb_data_len, frame->len);
 
-    // TODO update to work with large frames
-    jb_set_bool(js, "complete", ((int64_t)sb_data_len >= frame->len));
+    bool complete = false;
+    if (frame->len > 0) {
+        const uint64_t frame_re = frame->offset + (uint64_t)frame->len;
+        const uint64_t data_re = data_offset + sb_data_len;
+        complete = frame_re <= data_re;
+    }
+    jb_set_bool(js, "complete", complete);
 
     uint32_t data_len = MIN(sb_data_len, 256);
     jb_set_base64(js, "payload", data, data_len);
@@ -179,19 +184,23 @@ static void FrameAddPayloadTCP(JsonBuilder *js, const TcpStream *stream, const F
 
 static void FrameAddPayloadUDP(JsonBuilder *js, const Packet *p, const Frame *frame)
 {
-    DEBUG_VALIDATE_BUG_ON(frame->rel_offset >= p->payload_len);
-    if (frame->rel_offset >= p->payload_len)
+    DEBUG_VALIDATE_BUG_ON(frame->offset >= p->payload_len);
+    if (frame->offset >= p->payload_len)
         return;
 
-    int frame_len = frame->len != -1 ? frame->len : p->payload_len - frame->rel_offset;
-
-    if (frame->rel_offset + frame_len > p->payload_len) {
-        frame_len = p->payload_len - frame->rel_offset;
+    uint32_t frame_len;
+    if (frame->len == -1) {
+        frame_len = p->payload_len - frame->offset;
+    } else {
+        frame_len = (uint32_t)frame->len;
+    }
+    if (frame->offset + frame_len > p->payload_len) {
+        frame_len = p->payload_len - frame->offset;
         JB_SET_FALSE(js, "complete");
     } else {
         JB_SET_TRUE(js, "complete");
     }
-    const uint8_t *data = p->payload + frame->rel_offset;
+    const uint8_t *data = p->payload + frame->offset;
     const uint32_t data_len = frame_len;
 
     const uint32_t log_data_len = MIN(data_len, 256);
@@ -221,18 +230,21 @@ void FrameJsonLogOneFrame(const uint8_t ipproto, const Frame *frame, const Flow 
     DEBUG_VALIDATE_BUG_ON(ipproto != f->proto);
 
     jb_open_object(jb, "frame");
-    jb_set_string(jb, "type", AppLayerParserGetFrameNameById(ipproto, f->alproto, frame->type));
+    if (frame->type == FRAME_STREAM_TYPE) {
+        jb_set_string(jb, "type", "stream");
+    } else {
+        jb_set_string(jb, "type", AppLayerParserGetFrameNameById(ipproto, f->alproto, frame->type));
+    }
     jb_set_uint(jb, "id", frame->id);
     jb_set_string(jb, "direction", PKT_IS_TOSERVER(p) ? "toserver" : "toclient");
 
     if (ipproto == IPPROTO_TCP) {
         DEBUG_VALIDATE_BUG_ON(stream == NULL);
-        int64_t abs_offset = frame->rel_offset + (int64_t)STREAM_BASE_OFFSET(stream);
-        jb_set_uint(jb, "stream_offset", (uint64_t)abs_offset);
+        jb_set_uint(jb, "stream_offset", frame->offset);
 
         if (frame->len < 0) {
             uint64_t usable = StreamTcpGetUsable(stream, true);
-            uint64_t len = usable - abs_offset;
+            uint64_t len = usable - frame->offset;
             jb_set_uint(jb, "length", len);
         } else {
             jb_set_uint(jb, "length", frame->len);
@@ -323,15 +335,12 @@ static int FrameJson(ThreadVars *tv, JsonFrameLogThread *aft, const Packet *p)
 
     for (uint32_t idx = 0; idx < frames->cnt; idx++) {
         Frame *frame = FrameGetByIndex(frames, idx);
-        if (frame != NULL && frame->rel_offset >= 0) {
+        if (frame != NULL) {
             if (frame->flags & FRAME_FLAG_LOGGED)
                 continue;
 
-            int64_t abs_offset = (int64_t)frame->rel_offset + (int64_t)STREAM_BASE_OFFSET(stream);
+            int64_t abs_offset = (int64_t)frame->offset + (int64_t)STREAM_BASE_OFFSET(stream);
             int64_t win = STREAM_APP_PROGRESS(stream) - abs_offset;
-            //            SCLogDebug("abs_offset %" PRIi64 ", frame->rel_offset %" PRIi64
-            //                       ", frames->progress_rel %d win %" PRIi64,
-            //                    abs_offset, frame->rel_offset, frames->progress_rel, win);
 
             if (!eof && win < frame->len && win < 2500) {
                 SCLogDebug("frame id %" PRIi64 " len %" PRIi64 ", win %" PRIi64
@@ -479,6 +488,8 @@ static OutputInitResult JsonFrameLogInitCtxSub(ConfNode *conf, OutputCtx *parent
 
     output_ctx->data = json_output_ctx;
     output_ctx->DeInit = JsonFrameLogDeInitCtxSub;
+
+    FrameConfigEnableAll();
 
     result.ctx = output_ctx;
     result.ok = true;

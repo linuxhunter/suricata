@@ -133,8 +133,8 @@ impl SMBState {
                     SMBTransactionDCERPC::new_request(cmd, call_id)));
 
         SCLogDebug!("SMB: TX DCERPC created: ID {} hdr {:?}", tx.id, tx.hdr);
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 
@@ -148,8 +148,8 @@ impl SMBState {
                     SMBTransactionDCERPC::new_response(call_id)));
 
         SCLogDebug!("SMB: TX DCERPC created: ID {} hdr {:?}", tx.id, tx.hdr);
-        self.transactions.push(tx);
-        let tx_ref = self.transactions.last_mut();
+        self.transactions.push_back(tx);
+        let tx_ref = self.transactions.back_mut();
         return tx_ref.unwrap();
     }
 
@@ -439,11 +439,11 @@ fn dcerpc_response_handle(tx: &mut SMBTransaction,
 
 /// Handle DCERPC reply record. Called for READ, TRANS, IOCTL
 ///
-pub fn smb_read_dcerpc_record<'b>(state: &mut SMBState,
+pub fn smb_read_dcerpc_record(state: &mut SMBState,
         vercmd: SMBVerCmdStat,
         hdr: SMBCommonHdr,
         guid: &[u8],
-        indata: &'b [u8]) -> bool
+        indata: &[u8]) -> bool
 {
     let (_, ntstatus) = vercmd.get_ntstatus();
 

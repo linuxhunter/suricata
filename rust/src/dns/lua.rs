@@ -17,36 +17,27 @@
 
 use std::os::raw::c_int;
 
-use crate::lua::*;
 use crate::dns::dns::*;
 use crate::dns::log::*;
+use crate::lua::*;
 
 #[no_mangle]
-pub extern "C" fn rs_dns_lua_get_tx_id(clua: &mut CLuaState,
-                                       tx: &mut DNSTransaction)
-{
-    let lua = LuaState{
-        lua: clua,
-    };
+pub extern "C" fn rs_dns_lua_get_tx_id(clua: &mut CLuaState, tx: &mut DNSTransaction) {
+    let lua = LuaState { lua: clua };
 
     lua.pushinteger(tx.tx_id() as i64);
 }
 
 #[no_mangle]
-pub extern "C" fn rs_dns_lua_get_rrname(clua: &mut CLuaState,
-                                        tx: &mut DNSTransaction)
-                                        -> c_int
-{
-    let lua = LuaState{
-        lua: clua,
-    };
+pub extern "C" fn rs_dns_lua_get_rrname(clua: &mut CLuaState, tx: &mut DNSTransaction) -> c_int {
+    let lua = LuaState { lua: clua };
 
-    if let &Some(ref request) = &tx.request {
+    if let Some(request) = &tx.request {
         if let Some(query) = request.queries.first() {
             lua.pushstring(&String::from_utf8_lossy(&query.name));
             return 1;
         }
-    } else if let &Some(ref response) = &tx.response {
+    } else if let Some(response) = &tx.response {
         if let Some(query) = response.queries.first() {
             lua.pushstring(&String::from_utf8_lossy(&query.name));
             return 1;
@@ -57,13 +48,8 @@ pub extern "C" fn rs_dns_lua_get_rrname(clua: &mut CLuaState,
 }
 
 #[no_mangle]
-pub extern "C" fn rs_dns_lua_get_rcode(clua: &mut CLuaState,
-                                       tx: &mut DNSTransaction)
-                                       -> c_int
-{
-    let lua = LuaState{
-        lua: clua,
-    };
+pub extern "C" fn rs_dns_lua_get_rcode(clua: &mut CLuaState, tx: &mut DNSTransaction) -> c_int {
+    let lua = LuaState { lua: clua };
 
     let rcode = tx.rcode();
     if rcode > 0 {
@@ -75,13 +61,10 @@ pub extern "C" fn rs_dns_lua_get_rcode(clua: &mut CLuaState,
 }
 
 #[no_mangle]
-pub extern "C" fn rs_dns_lua_get_query_table(clua: &mut CLuaState,
-                                             tx: &mut DNSTransaction)
-                                             -> c_int
-{
-    let lua = LuaState{
-        lua: clua,
-    };
+pub extern "C" fn rs_dns_lua_get_query_table(
+    clua: &mut CLuaState, tx: &mut DNSTransaction,
+) -> c_int {
+    let lua = LuaState { lua: clua };
 
     let mut i: i64 = 0;
 
@@ -91,7 +74,7 @@ pub extern "C" fn rs_dns_lua_get_query_table(clua: &mut CLuaState,
 
     // We first look in the request for queries. However, if there is
     // no request, check the response for queries.
-    if let &Some(ref request) = &tx.request {
+    if let Some(request) = &tx.request {
         for query in &request.queries {
             lua.pushinteger(i);
             i += 1;
@@ -108,7 +91,7 @@ pub extern "C" fn rs_dns_lua_get_query_table(clua: &mut CLuaState,
 
             lua.settable(-3);
         }
-    } else if let &Some(ref response) = &tx.response {
+    } else if let Some(response) = &tx.response {
         for query in &response.queries {
             lua.pushinteger(i);
             i += 1;
@@ -133,13 +116,10 @@ pub extern "C" fn rs_dns_lua_get_query_table(clua: &mut CLuaState,
 }
 
 #[no_mangle]
-pub extern "C" fn rs_dns_lua_get_answer_table(clua: &mut CLuaState,
-                                              tx: &mut DNSTransaction)
-                                              -> c_int
-{
-    let lua = LuaState{
-        lua: clua,
-    };
+pub extern "C" fn rs_dns_lua_get_answer_table(
+    clua: &mut CLuaState, tx: &mut DNSTransaction,
+) -> c_int {
+    let lua = LuaState { lua: clua };
 
     let mut i: i64 = 0;
 
@@ -147,7 +127,7 @@ pub extern "C" fn rs_dns_lua_get_answer_table(clua: &mut CLuaState,
     // table even in the absence of any authorities.
     lua.newtable();
 
-    if let &Some(ref response) = &tx.response {
+    if let Some(response) = &tx.response {
         for answer in &response.answers {
             lua.pushinteger(i);
             i += 1;
@@ -173,37 +153,37 @@ pub extern "C" fn rs_dns_lua_get_answer_table(clua: &mut CLuaState,
                         lua.pushstring(&dns_print_addr(bytes));
                         lua.settable(-3);
                     }
-                },
-                DNSRData::CNAME(ref bytes) |
-                DNSRData::MX(ref bytes) |
-                DNSRData::NS(ref bytes) |
-                DNSRData::TXT(ref bytes) |
-                DNSRData::NULL(ref bytes) |
-                DNSRData::PTR(ref bytes) |
-                DNSRData::Unknown(ref bytes) => {
+                }
+                DNSRData::CNAME(ref bytes)
+                | DNSRData::MX(ref bytes)
+                | DNSRData::NS(ref bytes)
+                | DNSRData::TXT(ref bytes)
+                | DNSRData::NULL(ref bytes)
+                | DNSRData::PTR(ref bytes)
+                | DNSRData::Unknown(ref bytes) => {
                     if !bytes.is_empty() {
                         lua.pushstring("addr");
                         lua.pushstring(&String::from_utf8_lossy(bytes));
                         lua.settable(-3);
                     }
-                },
+                }
                 DNSRData::SOA(ref soa) => {
                     if !soa.mname.is_empty() {
                         lua.pushstring("addr");
                         lua.pushstring(&String::from_utf8_lossy(&soa.mname));
                         lua.settable(-3);
                     }
-                },
+                }
                 DNSRData::SSHFP(ref sshfp) => {
                     lua.pushstring("addr");
                     lua.pushstring(&String::from_utf8_lossy(&sshfp.fingerprint));
                     lua.settable(-3);
-                },
+                }
                 DNSRData::SRV(ref srv) => {
                     lua.pushstring("addr");
                     lua.pushstring(&String::from_utf8_lossy(&srv.target));
                     lua.settable(-3);
-                },
+                }
             }
             lua.settable(-3);
         }
@@ -215,13 +195,10 @@ pub extern "C" fn rs_dns_lua_get_answer_table(clua: &mut CLuaState,
 }
 
 #[no_mangle]
-pub extern "C" fn rs_dns_lua_get_authority_table(clua: &mut CLuaState,
-                                                 tx: &mut DNSTransaction)
-                                                 -> c_int
-{
-    let lua = LuaState{
-        lua: clua,
-    };
+pub extern "C" fn rs_dns_lua_get_authority_table(
+    clua: &mut CLuaState, tx: &mut DNSTransaction,
+) -> c_int {
+    let lua = LuaState { lua: clua };
 
     let mut i: i64 = 0;
 
@@ -229,7 +206,7 @@ pub extern "C" fn rs_dns_lua_get_authority_table(clua: &mut CLuaState,
     // table even in the absence of any authorities.
     lua.newtable();
 
-    if let &Some(ref response) = &tx.response {
+    if let Some(response) = &tx.response {
         for answer in &response.authorities {
             lua.pushinteger(i);
             i += 1;

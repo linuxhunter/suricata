@@ -28,6 +28,7 @@
 typedef struct FlowStorageId FlowStorageId;
 
 #include "decode.h"
+#include "util-time.h"
 #include "util-exception-policy.h"
 #include "util-var.h"
 #include "util-optimize.h"
@@ -49,8 +50,8 @@ typedef struct AppLayerParserState_ AppLayerParserState;
 #define FLOW_TO_SRC_SEEN                BIT_U32(0)
 /** At least one packet from the destination address was seen */
 #define FLOW_TO_DST_SEEN                BIT_U32(1)
-/** Don't return this from the flow hash. It has been replaced. */
-#define FLOW_TCP_REUSED                 BIT_U32(2)
+
+// vacancy
 
 /** Flow was inspected against IP-Only sigs in the toserver direction */
 #define FLOW_TOSERVER_IPONLY_SET        BIT_U32(3)
@@ -378,12 +379,6 @@ typedef struct Flow_
     uint8_t proto;
     uint8_t recursion_level;
     uint16_t vlan_id[2];
-    /** how many references exist to this flow *right now*
-     *
-     *  On receiving a packet the counter is incremented while the flow
-     *  bucked is locked, which is also the case on timeout pruning.
-     */
-    FlowRefCount use_cnt;
 
     uint8_t vlan_idx;
 
@@ -411,16 +406,14 @@ typedef struct Flow_
     /** flow hash - the flow hash before hash table size mod. */
     uint32_t flow_hash;
 
-    /* time stamp of last update (last packet). Set/updated under the
-     * flow and flow hash row locks, safe to read under either the
-     * flow lock or flow hash row lock. */
-    struct timeval lastts;
-
-    /* end of flow "header" */
-
     /** timeout policy value in seconds to add to the lastts.tv_sec
      *  when a packet has been received. */
     uint32_t timeout_policy;
+
+    /* time stamp of last update (last packet). Set/updated under the
+     * flow and flow hash row locks, safe to read under either the
+     * flow lock or flow hash row lock. */
+    SCTime_t lastts;
 
     FlowStateType flow_state;
 
@@ -501,7 +494,7 @@ typedef struct Flow_
 
     struct FlowBucket_ *fb;
 
-    struct timeval startts;
+    SCTime_t startts;
 
     uint32_t todstpktcnt;
     uint32_t tosrcpktcnt;
@@ -606,6 +599,16 @@ uint16_t FlowGetDestinationPort(Flow *flow);
 
 /** ----- Inline functions ----- */
 
+static inline AppProto FlowGetAppProtocol(const Flow *f)
+{
+    return f->alproto;
+}
+
+static inline void *FlowGetAppState(const Flow *f)
+{
+    return f->alstate;
+}
+
 /** \brief Set the No Packet Inspection Flag without locking the flow.
  *
  * \param f Flow to set the flag in
@@ -634,33 +637,7 @@ static inline void FlowSetNoPayloadInspectionFlag(Flow *f)
     SCReturn;
 }
 
-/**
- *  \brief increase the use count of a flow
- *
- *  \param f flow to decrease use count for
- */
-static inline void FlowIncrUsecnt(Flow *f)
-{
-    if (f == NULL)
-        return;
-
-    f->use_cnt++;
-}
-
-/**
- *  \brief decrease the use count of a flow
- *
- *  \param f flow to decrease use count for
- */
-static inline void FlowDecrUsecnt(Flow *f)
-{
-    if (f == NULL)
-        return;
-
-    f->use_cnt--;
-}
-
-/** \brief Reference the flow, bumping the flows use_cnt
+/** \brief Reference the flow
  *  \note This should only be called once for a destination
  *        pointer */
 static inline void FlowReference(Flow **d, Flow *f)
@@ -672,7 +649,6 @@ static inline void FlowReference(Flow **d, Flow *f)
         if (*d == f)
             return;
 #endif
-        FlowIncrUsecnt(f);
         *d = f;
     }
 }
@@ -680,7 +656,6 @@ static inline void FlowReference(Flow **d, Flow *f)
 static inline void FlowDeReference(Flow **d)
 {
     if (likely(*d != NULL)) {
-        FlowDecrUsecnt(*d);
         *d = NULL;
     }
 }
@@ -692,8 +667,8 @@ static inline void FlowDeReference(Flow **d)
  */
 static inline int64_t FlowGetId(const Flow *f)
 {
-    int64_t id = (uint64_t)(f->startts.tv_sec & 0x0000FFFF) << 48 |
-                 (uint64_t)(f->startts.tv_usec & 0x0000FFFF) << 32 | (int64_t)f->flow_hash;
+    int64_t id = (uint64_t)(SCTIME_SECS(f->startts) & 0x0000FFFF) << 48 |
+                 (uint64_t)(SCTIME_USECS(f->startts) & 0x0000FFFF) << 32 | (int64_t)f->flow_hash;
     /* reduce to 51 bits as Javascript and even JSON often seem to
      * max out there. */
     id &= 0x7ffffffffffffLL;

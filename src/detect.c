@@ -106,10 +106,10 @@ static void DetectRun(ThreadVars *th_v,
         Packet *p)
 {
     SCEnter();
-    SCLogDebug("p->pcap_cnt %" PRIu64 " direction %s flow %p", p->pcap_cnt,
+    SCLogDebug("p->pcap_cnt %" PRIu64 " direction %s pkt_src %s", p->pcap_cnt,
             p->flow ? (FlowGetPacketDirection(p->flow, p) == TOSERVER ? "toserver" : "toclient")
                     : "noflow",
-            p->flow);
+            PktSrcToString(p->pkt_src));
 
     /* bail early if packet should not be inspected */
     if (p->flags & PKT_NOPACKET_INSPECTION) {
@@ -562,7 +562,7 @@ static void DetectRunInspectIPOnly(ThreadVars *tv, const DetectEngineCtx *de_ctx
             SCLogDebug("testing against \"ip-only\" signatures");
 
             PACKET_PROFILING_DETECT_START(p, PROF_DETECT_IPONLY);
-            IPOnlyMatchPacket(tv, de_ctx, det_ctx, &de_ctx->io_ctx, &det_ctx->io_ctx, p);
+            IPOnlyMatchPacket(tv, de_ctx, det_ctx, &de_ctx->io_ctx, p);
             PACKET_PROFILING_DETECT_END(p, PROF_DETECT_IPONLY);
 
             /* save in the flow that we scanned this direction... */
@@ -573,8 +573,7 @@ static void DetectRunInspectIPOnly(ThreadVars *tv, const DetectEngineCtx *de_ctx
 
         /* Even without flow we should match the packet src/dst */
         PACKET_PROFILING_DETECT_START(p, PROF_DETECT_IPONLY);
-        IPOnlyMatchPacket(tv, de_ctx, det_ctx, &de_ctx->io_ctx,
-                          &det_ctx->io_ctx, p);
+        IPOnlyMatchPacket(tv, de_ctx, det_ctx, &de_ctx->io_ctx, p);
         PACKET_PROFILING_DETECT_END(p, PROF_DETECT_IPONLY);
     }
 }
@@ -898,7 +897,6 @@ static DetectRunScratchpad DetectRunSetup(
             if (p->proto == IPPROTO_TCP && pflow->protoctx &&
                     StreamReassembleRawHasDataReady(pflow->protoctx, p)) {
                 p->flags |= PKT_DETECT_HAS_STREAMDATA;
-                flow_flags |= STREAM_FLUSH;
             }
             SCLogDebug("alproto %u", alproto);
         } else {
@@ -1078,12 +1076,7 @@ static bool DetectRunTxInspectRule(ThreadVars *tv,
     bool mpm_before_progress = false;   // is mpm engine before progress?
     bool mpm_in_progress = false;       // is mpm engine in a buffer we will revisit?
 
-    /* see if we want to pass on the FLUSH flag */
-    if ((s->flags & SIG_FLAG_FLUSH) == 0)
-        flow_flags &=~ STREAM_FLUSH;
-
     TRACE_SID_TXS(s->id, tx, "starting %s", direction ? "toclient" : "toserver");
-    TRACE_SID_TXS(s->id, tx, "FLUSH? %s", (flow_flags & STREAM_FLUSH)?"true":"false");
 
     /* for a new inspection we inspect pkt header and packet matches */
     if (likely(stored_flags == NULL)) {
@@ -1240,6 +1233,11 @@ static bool DetectRunTxInspectRule(ThreadVars *tv,
     return retval;
 }
 
+#define NO_TX                                                                                      \
+    {                                                                                              \
+        NULL, 0, NULL, NULL, 0, 0, 0, 0, 0,                                                        \
+    }
+
 /** \internal
  *  \brief get a DetectTransaction object
  *  \retval struct filled with relevant info or all nulls/0s
@@ -1248,18 +1246,24 @@ static DetectTransaction GetDetectTx(const uint8_t ipproto, const AppProto alpro
         void *alstate, const uint64_t tx_id, void *tx_ptr, const int tx_end_state,
         const uint8_t flow_flags)
 {
-    uint64_t detect_flags;
     AppLayerTxData *txd = AppLayerParserGetTxData(ipproto, alproto, tx_ptr);
-    if (likely(txd != NULL)) {
-        detect_flags = (flow_flags & STREAM_TOSERVER) ? txd->detect_flags_ts : txd->detect_flags_tc;
-    } else {
-        detect_flags = 0;
+    if (unlikely(txd == NULL)) {
+        DetectTransaction no_tx = NO_TX;
+        return no_tx;
     }
+    uint64_t detect_flags =
+            (flow_flags & STREAM_TOSERVER) ? txd->detect_flags_ts : txd->detect_flags_tc;
     if (detect_flags & APP_LAYER_TX_INSPECTED_FLAG) {
         SCLogDebug("%"PRIu64" tx already fully inspected for %s. Flags %016"PRIx64,
                 tx_id, flow_flags & STREAM_TOSERVER ? "toserver" : "toclient",
                 detect_flags);
-        DetectTransaction no_tx = { NULL, 0, NULL, NULL, 0, 0, 0, 0, 0, };
+        DetectTransaction no_tx = NO_TX;
+        return no_tx;
+    }
+    if (detect_flags & APP_LAYER_TX_SKIP_INSPECT_FLAG) {
+        SCLogDebug("%" PRIu64 " tx should not be inspected in direction %s. Flags %016" PRIx64,
+                tx_id, flow_flags & STREAM_TOSERVER ? "toserver" : "toclient", detect_flags);
+        DetectTransaction no_tx = NO_TX;
         return no_tx;
     }
 
@@ -1565,18 +1569,19 @@ static void DetectRunFrames(ThreadVars *tv, DetectEngineCtx *de_ctx, DetectEngin
 
     for (uint32_t idx = 0; idx < frames->cnt; idx++) {
         SCLogDebug("frame %u", idx);
-        const Frame *frame = FrameGetByIndex(frames, idx);
+        Frame *frame = FrameGetByIndex(frames, idx);
         if (frame == NULL) {
             continue;
         }
 
+        det_ctx->frame_inspect_progress = 0;
         uint32_t array_idx = 0;
         uint32_t total_rules = det_ctx->match_array_cnt;
 
         /* run prefilter engines and merge results into a candidates array */
         if (sgh->frame_engines) {
             //            PACKET_PROFILING_DETECT_START(p, PROF_DETECT_PF_TX);
-            DetectRunPrefilterFrame(det_ctx, sgh, p, frames, frame, alproto, idx);
+            DetectRunPrefilterFrame(det_ctx, sgh, p, frames, frame, alproto);
             //            PACKET_PROFILING_DETECT_END(p, PROF_DETECT_PF_TX);
             SCLogDebug("%p/%" PRIi64 " rules added from prefilter: %u candidates", frame, frame->id,
                     det_ctx->pmq.rule_id_array_cnt);
@@ -1623,6 +1628,14 @@ static void DetectRunFrames(ThreadVars *tv, DetectEngineCtx *de_ctx, DetectEngin
         for (uint32_t i = 0; i < array_idx; i++) {
             const Signature *s = det_ctx->tx_candidates[i].s;
 
+            /* deduplicate: rules_array is sorted, but not deduplicated.
+             * As they are back to back in that case we can check for it
+             * here. We select the stored state one as that comes first
+             * in the array. */
+            while ((i + 1) < array_idx &&
+                    det_ctx->tx_candidates[i].s == det_ctx->tx_candidates[i + 1].s) {
+                i++;
+            }
             SCLogDebug("%p/%" PRIi64 " inspecting: sid %u (%u)", frame, frame->id, s->id, s->num);
 
             /* start new inspection */
@@ -1632,7 +1645,7 @@ static void DetectRunFrames(ThreadVars *tv, DetectEngineCtx *de_ctx, DetectEngin
             RULE_PROFILING_START(p);
             int r = DetectRunInspectRuleHeader(p, f, s, s->flags, s->proto.flags);
             if (r == 1) {
-                r = DetectRunFrameInspectRule(tv, det_ctx, s, f, p, frames, frame, idx);
+                r = DetectRunFrameInspectRule(tv, det_ctx, s, f, p, frames, frame);
                 if (r == 1) {
                     /* match */
                     DetectRunPostMatch(tv, det_ctx, p, s);
@@ -1649,6 +1662,18 @@ static void DetectRunFrames(ThreadVars *tv, DetectEngineCtx *de_ctx, DetectEngin
             DetectVarProcessList(det_ctx, p->flow, p);
             RULE_PROFILING_END(det_ctx, s, r, p);
         }
+
+        /* update Frame::inspect_progress here instead of in the code above. The reason is that a
+         * frame might be used more than once in buffers with transforms. */
+        if (frame->inspect_progress < det_ctx->frame_inspect_progress) {
+            frame->inspect_progress = det_ctx->frame_inspect_progress;
+            SCLogDebug("frame->inspect_progress: %" PRIu64 " -> updated", frame->inspect_progress);
+        } else {
+            SCLogDebug(
+                    "frame->inspect_progress: %" PRIu64 " -> not updated", frame->inspect_progress);
+        }
+
+        SCLogDebug("%p/%" PRIi64 " rules inspected, running cleanup", frame, frame->id);
         InspectionBufferClean(det_ctx);
     }
 }

@@ -664,7 +664,7 @@ static int StreamTcpTest10(void)
     p->flow = &f;
 
     StreamTcpUTInit(&stt.ra_ctx);
-    stream_config.async_oneside = TRUE;
+    stream_config.async_oneside = true;
 
     tcph.th_win = htons(5480);
     tcph.th_seq = htonl(10);
@@ -701,7 +701,8 @@ static int StreamTcpTest10(void)
     p->payload = payload;
     p->payload_len = 3;
 
-    FAIL_IF_NOT(StreamTcpPacket(&tv, p, &stt, &pq) == -1);
+    /* spurious retransmission */
+    FAIL_IF_NOT(StreamTcpPacket(&tv, p, &stt, &pq) == 0);
 
     FAIL_IF(((TcpSession *)(p->flow->protoctx))->state != TCP_ESTABLISHED);
 
@@ -742,7 +743,7 @@ static int StreamTcpTest11(void)
     p->flow = &f;
 
     StreamTcpUTInit(&stt.ra_ctx);
-    stream_config.async_oneside = TRUE;
+    stream_config.async_oneside = true;
 
     tcph.th_win = htons(5480);
     tcph.th_seq = htonl(10);
@@ -781,12 +782,12 @@ static int StreamTcpTest11(void)
 
     FAIL_IF(StreamTcpPacket(&tv, p, &stt, &pq) == -1);
 
-    FAIL_IF(!(((TcpSession *)(p->flow->protoctx))->flags & STREAMTCP_FLAG_ASYNC));
+    TcpSession *ssn = p->flow->protoctx;
+    FAIL_IF((ssn->flags & STREAMTCP_FLAG_ASYNC) == 0);
+    FAIL_IF(ssn->state != TCP_ESTABLISHED);
 
-    FAIL_IF(((TcpSession *)(p->flow->protoctx))->state != TCP_ESTABLISHED);
-
-    FAIL_IF(((TcpSession *)(p->flow->protoctx))->server.last_ack != 2 &&
-            ((TcpSession *)(p->flow->protoctx))->client.next_seq != 1);
+    FAIL_IF(ssn->server.last_ack != 11);
+    FAIL_IF(ssn->client.next_seq != 14);
 
     StreamTcpSessionClear(p->flow->protoctx);
     SCFree(p);
@@ -856,7 +857,7 @@ static int StreamTcpTest12(void)
     if (StreamTcpPacket(&tv, p, &stt, &pq) == -1)
         goto end;
 
-    if (stream_config.async_oneside != TRUE) {
+    if (!stream_config.async_oneside) {
         ret = 1;
         goto end;
     }
@@ -950,7 +951,7 @@ static int StreamTcpTest13(void)
     if (StreamTcpPacket(&tv, p, &stt, &pq) == -1)
         goto end;
 
-    if (stream_config.async_oneside != TRUE) {
+    if (!stream_config.async_oneside) {
         ret = 1;
         goto end;
     }
@@ -2217,12 +2218,10 @@ static int StreamTcpTest23(void)
     TCPHdr tcph;
     uint8_t packet[1460] = "";
     ThreadVars tv;
-    PacketQueueNoLock pq;
 
     Packet *p = PacketGetFromAlloc();
     FAIL_IF(p == NULL);
 
-    memset(&pq, 0, sizeof(PacketQueueNoLock));
     memset(&f, 0, sizeof(Flow));
     memset(&tcph, 0, sizeof(TCPHdr));
     memset(&tv, 0, sizeof(ThreadVars));
@@ -2247,19 +2246,19 @@ static int StreamTcpTest23(void)
     p->tcph->th_ack = htonl(3373419609UL);
     p->payload_len = 2;
 
-    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p, &pq) == -1);
+    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p) == -1);
 
     p->tcph->th_seq = htonl(3184324455UL);
     p->tcph->th_ack = htonl(3373419621UL);
     p->payload_len = 2;
 
-    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p, &pq) == -1);
+    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p) == -1);
 
     p->tcph->th_seq = htonl(3184324453UL);
     p->tcph->th_ack = htonl(3373419621UL);
     p->payload_len = 6;
 
-    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p, &pq) == -1);
+    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p) == -1);
 
     TcpSegment *seg = RB_MAX(TCPSEG, &ssn.client.seg_tree);
     FAIL_IF_NULL(seg);
@@ -2285,8 +2284,6 @@ static int StreamTcpTest24(void)
     uint8_t packet[1460] = "";
     ThreadVars tv;
     memset(&tv, 0, sizeof(ThreadVars));
-    PacketQueueNoLock pq;
-    memset(&pq, 0, sizeof(PacketQueueNoLock));
 
     StreamTcpUTInit(&stt.ra_ctx);
     StreamTcpUTSetupSession(&ssn);
@@ -2312,19 +2309,19 @@ static int StreamTcpTest24(void)
     p->tcph->th_ack = htonl(3373419621UL);
     p->payload_len = 4;
 
-    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p, &pq) == -1);
+    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p) == -1);
 
     p->tcph->th_seq = htonl(3184324459UL);
     p->tcph->th_ack = htonl(3373419633UL);
     p->payload_len = 2;
 
-    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p, &pq) == -1);
+    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p) == -1);
 
     p->tcph->th_seq = htonl(3184324459UL);
     p->tcph->th_ack = htonl(3373419657UL);
     p->payload_len = 4;
 
-    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p, &pq) == -1);
+    FAIL_IF(StreamTcpReassembleHandleSegment(&tv, stt.ra_ctx, &ssn, &ssn.client, p) == -1);
 
     TcpSegment *seg = RB_MAX(TCPSEG, &ssn.client.seg_tree);
     FAIL_IF_NULL(seg);

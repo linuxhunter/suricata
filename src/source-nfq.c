@@ -461,11 +461,13 @@ static int NFQSetupPkt (Packet *p, struct nfq_q_handle *qh, void *data)
         SET_PKT_LEN(p, 0);
     }
 
-    ret = nfq_get_timestamp(tb, &p->ts);
-    if (ret != 0 || p->ts.tv_sec == 0) {
-        memset (&p->ts, 0, sizeof(struct timeval));
-        gettimeofday(&p->ts, NULL);
+    struct timeval tv;
+    ret = nfq_get_timestamp(tb, &tv);
+    if (ret != 0 || tv.tv_sec == 0) {
+        memset(&tv, 0, sizeof(tv));
+        gettimeofday(&tv, NULL);
     }
+    p->ts = SCTIME_FROM_TIMEVAL(&tv);
 
     p->datalink = DLT_RAW;
     return 0;
@@ -1268,7 +1270,7 @@ TmEcode DecodeNFQThreadDeinit(ThreadVars *tv, void *data)
 /**
  * \brief Clean global contexts. Must be called on exit.
  */
-void NFQContextsClean()
+void NFQContextsClean(void)
 {
     if (g_nfq_q != NULL) {
         SCFree(g_nfq_q);

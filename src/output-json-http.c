@@ -380,7 +380,7 @@ static void EveHttpLogJSONHeaders(JsonBuilder *js, uint32_t direction, htp_tx_t 
 
 static void BodyPrintableBuffer(JsonBuilder *js, HtpBody *body, const char *key)
 {
-    if (body->sb != NULL && body->sb->buf != NULL) {
+    if (body->sb != NULL && body->sb->region.buf != NULL) {
         uint32_t offset = 0;
         const uint8_t *body_data;
         uint32_t body_data_len;
@@ -418,7 +418,7 @@ void EveHttpLogJSONBodyPrintable(JsonBuilder *js, Flow *f, uint64_t tx_id)
 
 static void BodyBase64Buffer(JsonBuilder *js, HtpBody *body, const char *key)
 {
-    if (body->sb != NULL && body->sb->buf != NULL) {
+    if (body->sb != NULL && body->sb->region.buf != NULL) {
         const uint8_t *body_data;
         uint32_t body_data_len;
         uint64_t body_offset;
@@ -569,21 +569,13 @@ static OutputInitResult OutputHttpLogInitSub(ConfNode *conf, OutputCtx *parent_c
         ConfNode *custom;
         if ((custom = ConfNodeLookupChild(conf, "custom")) != NULL) {
             ConfNode *field;
-            TAILQ_FOREACH(field, &custom->head, next)
-            {
-                if (field != NULL)
-                {
-                    HttpField f;
-                    for (f = HTTP_FIELD_ACCEPT; f < HTTP_FIELD_SIZE; f++)
-                    {
-                        if ((strcmp(http_fields[f].config_field,
-                                   field->val) == 0) ||
-                            (strcasecmp(http_fields[f].htp_field,
-                                        field->val) == 0))
-                        {
-                            http_ctx->fields |= (1ULL<<f);
-                            break;
-                        }
+            TAILQ_FOREACH (field, &custom->head, next) {
+                HttpField f;
+                for (f = HTTP_FIELD_ACCEPT; f < HTTP_FIELD_SIZE; f++) {
+                    if ((strcmp(http_fields[f].config_field, field->val) == 0) ||
+                            (strcasecmp(http_fields[f].htp_field, field->val) == 0)) {
+                        http_ctx->fields |= (1ULL << f);
+                        break;
                     }
                 }
             }

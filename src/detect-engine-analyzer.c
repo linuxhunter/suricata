@@ -34,6 +34,9 @@
 #include "detect-engine-mpm.h"
 #include "conf.h"
 #include "detect-content.h"
+#include "detect-pcre.h"
+#include "detect-bytejump.h"
+#include "detect-bytetest.h"
 #include "detect-flow.h"
 #include "detect-tcp-flags.h"
 #include "feature.h"
@@ -431,7 +434,7 @@ void CleanupRuleAnalyzer(void)
  * \retval 1 if successful
  * \retval 0 if on error
  */
-int PerCentEncodingSetup ()
+int PerCentEncodingSetup(void)
 {
 #define DETECT_PERCENT_ENCODING_REGEX "%[0-9|a-f|A-F]{2}"
     int en;
@@ -639,6 +642,15 @@ static void DumpContent(JsonBuilder *js, const DetectContentData *cd)
         jb_set_uint(js, "within", cd->within);
     }
     jb_set_bool(js, "fast_pattern", cd->flags & DETECT_CONTENT_FAST_PATTERN);
+    jb_set_bool(js, "relative_next", cd->flags & DETECT_CONTENT_RELATIVE_NEXT);
+}
+
+static void DumpPcre(JsonBuilder *js, const DetectPcreData *cd)
+{
+    jb_set_bool(js, "relative", cd->flags & DETECT_PCRE_RELATIVE);
+    jb_set_bool(js, "relative_next", cd->flags & DETECT_PCRE_RELATIVE_NEXT);
+    jb_set_bool(js, "nocase", cd->flags & DETECT_PCRE_CASELESS);
+    jb_set_bool(js, "negated", cd->flags & DETECT_PCRE_NEGATE);
 }
 
 static void DumpMatches(RuleAnalyzer *ctx, JsonBuilder *js, const SigMatchData *smd)
@@ -672,6 +684,106 @@ static void DumpMatches(RuleAnalyzer *ctx, JsonBuilder *js, const SigMatchData *
                             (char *)"pattern looks like it inspects HTTP, use http.user_agent "
                                     "or http.header for improved performance");
                 }
+                if (cd->flags & DETECT_CONTENT_WITHIN2DEPTH) {
+                    AnalyzerNote(ctx, (char *)"'within' option for pattern w/o previous content "
+                                              "was converted to 'depth'");
+                }
+                if (cd->flags & DETECT_CONTENT_DISTANCE2OFFSET) {
+                    AnalyzerNote(ctx, (char *)"'distance' option for pattern w/o previous content "
+                                              "was converted to 'offset'");
+                }
+                jb_close(js);
+                break;
+            }
+            case DETECT_PCRE: {
+                const DetectPcreData *cd = (const DetectPcreData *)smd->ctx;
+
+                jb_open_object(js, "pcre");
+                DumpPcre(js, cd);
+                jb_close(js);
+                if (cd->flags & DETECT_PCRE_RAWBYTES) {
+                    AnalyzerNote(ctx,
+                            (char *)"'/B' (rawbytes) option is a no-op and is silently ignored");
+                }
+                break;
+            }
+            case DETECT_BYTEJUMP: {
+                const DetectBytejumpData *cd = (const DetectBytejumpData *)smd->ctx;
+
+                jb_open_object(js, "byte_jump");
+                jb_set_uint(js, "nbytes", cd->nbytes);
+                jb_set_uint(js, "offset", cd->offset);
+                jb_set_uint(js, "multiplier", cd->multiplier);
+                jb_set_uint(js, "post_offset", cd->post_offset);
+                switch (cd->base) {
+                    case DETECT_BYTEJUMP_BASE_UNSET:
+                        jb_set_string(js, "base", "unset");
+                        break;
+                    case DETECT_BYTEJUMP_BASE_OCT:
+                        jb_set_string(js, "base", "oct");
+                        break;
+                    case DETECT_BYTEJUMP_BASE_DEC:
+                        jb_set_string(js, "base", "dec");
+                        break;
+                    case DETECT_BYTEJUMP_BASE_HEX:
+                        jb_set_string(js, "base", "hex");
+                        break;
+                }
+                jb_open_array(js, "flags");
+                if (cd->flags & DETECT_BYTEJUMP_BEGIN)
+                    jb_append_string(js, "from_beginning");
+                if (cd->flags & DETECT_BYTEJUMP_LITTLE)
+                    jb_append_string(js, "little_endian");
+                if (cd->flags & DETECT_BYTEJUMP_BIG)
+                    jb_append_string(js, "big_endian");
+                if (cd->flags & DETECT_BYTEJUMP_STRING)
+                    jb_append_string(js, "string");
+                if (cd->flags & DETECT_BYTEJUMP_RELATIVE)
+                    jb_append_string(js, "relative");
+                if (cd->flags & DETECT_BYTEJUMP_ALIGN)
+                    jb_append_string(js, "align");
+                if (cd->flags & DETECT_BYTEJUMP_DCE)
+                    jb_append_string(js, "dce");
+                if (cd->flags & DETECT_BYTEJUMP_OFFSET_BE)
+                    jb_append_string(js, "offset_be");
+                if (cd->flags & DETECT_BYTEJUMP_END)
+                    jb_append_string(js, "from_end");
+                jb_close(js);
+                jb_close(js);
+                break;
+            }
+            case DETECT_BYTETEST: {
+                const DetectBytetestData *cd = (const DetectBytetestData *)smd->ctx;
+
+                jb_open_object(js, "byte_test");
+                jb_set_uint(js, "nbytes", cd->nbytes);
+                jb_set_uint(js, "offset", cd->offset);
+                switch (cd->base) {
+                    case DETECT_BYTETEST_BASE_UNSET:
+                        jb_set_string(js, "base", "unset");
+                        break;
+                    case DETECT_BYTETEST_BASE_OCT:
+                        jb_set_string(js, "base", "oct");
+                        break;
+                    case DETECT_BYTETEST_BASE_DEC:
+                        jb_set_string(js, "base", "dec");
+                        break;
+                    case DETECT_BYTETEST_BASE_HEX:
+                        jb_set_string(js, "base", "hex");
+                        break;
+                }
+                jb_open_array(js, "flags");
+                if (cd->flags & DETECT_BYTETEST_LITTLE)
+                    jb_append_string(js, "little_endian");
+                if (cd->flags & DETECT_BYTETEST_BIG)
+                    jb_append_string(js, "big_endian");
+                if (cd->flags & DETECT_BYTETEST_STRING)
+                    jb_append_string(js, "string");
+                if (cd->flags & DETECT_BYTETEST_RELATIVE)
+                    jb_append_string(js, "relative");
+                if (cd->flags & DETECT_BYTETEST_DCE)
+                    jb_append_string(js, "dce");
+                jb_close(js);
                 jb_close(js);
                 break;
             }
@@ -821,6 +933,16 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
         jb_start_object(ctx.js);
         jb_set_string(ctx.js, "name", name);
         jb_set_bool(ctx.js, "is_mpm", pkt->mpm);
+        if (pkt->v1.transforms != NULL) {
+            jb_open_array(ctx.js, "transforms");
+            for (int t = 0; t < pkt->v1.transforms->cnt; t++) {
+                jb_start_object(ctx.js);
+                jb_set_string(ctx.js, "name",
+                        sigmatch_table[pkt->v1.transforms->transforms[t].transform].name);
+                jb_close(ctx.js);
+            }
+            jb_close(ctx.js);
+        }
         DumpMatches(&ctx, ctx.js, pkt->smd);
         jb_close(ctx.js);
         if (pkt->mpm) {
@@ -835,6 +957,16 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
         jb_start_object(ctx.js);
         jb_set_string(ctx.js, "name", name);
         jb_set_bool(ctx.js, "is_mpm", frame->mpm);
+        if (frame->v1.transforms != NULL) {
+            jb_open_array(ctx.js, "transforms");
+            for (int t = 0; t < frame->v1.transforms->cnt; t++) {
+                jb_start_object(ctx.js);
+                jb_set_string(ctx.js, "name",
+                        sigmatch_table[frame->v1.transforms->transforms[t].transform].name);
+                jb_close(ctx.js);
+            }
+            jb_close(ctx.js);
+        }
         DumpMatches(&ctx, ctx.js, frame->smd);
         jb_close(ctx.js);
     }
@@ -875,6 +1007,17 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
             jb_set_bool(ctx.js, "is_mpm", app->mpm);
             jb_set_string(ctx.js, "app_proto", AppProtoToString(app->alproto));
             jb_set_uint(ctx.js, "progress", app->progress);
+
+            if (app->v2.transforms != NULL) {
+                jb_open_array(ctx.js, "transforms");
+                for (int t = 0; t < app->v2.transforms->cnt; t++) {
+                    jb_start_object(ctx.js);
+                    jb_set_string(ctx.js, "name",
+                            sigmatch_table[app->v2.transforms->transforms[t].transform].name);
+                    jb_close(ctx.js);
+                }
+                jb_close(ctx.js);
+            }
             DumpMatches(&ctx, ctx.js, app->smd);
             jb_close(ctx.js);
             if (app->mpm) {
@@ -892,7 +1035,7 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
     jb_open_object(ctx.js, "lists");
     for (int i = 0; i < DETECT_SM_LIST_MAX; i++) {
         if (s->sm_arrays[i] != NULL) {
-            jb_open_object(ctx.js, DetectSigmatchListEnumToString(i));
+            jb_open_object(ctx.js, DetectListToHumanString(i));
             DumpMatches(&ctx, ctx.js, s->sm_arrays[i]);
             jb_close(ctx.js);
         }

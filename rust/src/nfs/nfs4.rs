@@ -68,8 +68,7 @@ impl NFSState {
         let found = match self.get_file_tx_by_handle(&file_handle, Direction::ToServer) {
             Some(tx) => {
                 if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
-                    let (files, flags) = tdf.files.get(Direction::ToServer);
-                    filetracker_newchunk(&mut tdf.file_tracker, files, flags,
+                    filetracker_newchunk(&mut tdf.file_tracker,
                             &file_name, w.data, w.offset,
                             w.write_len, fill_bytes as u8, is_last, &r.hdr.xid);
                     tdf.chunk_count += 1;
@@ -86,8 +85,7 @@ impl NFSState {
         if !found {
             let tx = self.new_file_tx(&file_handle, &file_name, Direction::ToServer);
             if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
-                let (files, flags) = tdf.files.get(Direction::ToServer);
-                filetracker_newchunk(&mut tdf.file_tracker, files, flags,
+                filetracker_newchunk(&mut tdf.file_tracker,
                         &file_name, w.data, w.offset,
                         w.write_len, fill_bytes as u8, is_last, &r.hdr.xid);
                 tx.procedure = NFSPROC4_WRITE;
@@ -117,8 +115,7 @@ impl NFSState {
         let file_handle = fh.to_vec();
         if let Some(tx) = self.get_file_tx_by_handle(&file_handle, Direction::ToServer) {
             if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
-                let (files, flags) = tdf.files.get(Direction::ToServer);
-                tdf.file_tracker.close(files, flags);
+                filetracker_close(&mut tdf.file_tracker);
                 tdf.file_last_xid = r.hdr.xid;
                 tx.is_last = true;
                 tx.request_done = true;
@@ -127,8 +124,8 @@ impl NFSState {
         }
     }
 
-    fn new_tx_v4<'b>(
-        &mut self, r: &RpcPacket<'b>, xidmap: &NFSRequestXidMap, procedure: u32,
+    fn new_tx_v4(
+        &mut self, r: &RpcPacket, xidmap: &NFSRequestXidMap, procedure: u32,
         _aux_opcodes: &[u32],
     ) {
         let mut tx = self.new_tx();
@@ -241,7 +238,7 @@ impl NFSState {
     }
 
     /// complete request record
-    pub fn process_request_record_v4<'b>(&mut self, r: &RpcPacket<'b>) {
+    pub fn process_request_record_v4(&mut self, r: &RpcPacket) {
         SCLogDebug!(
             "NFSv4 REQUEST {} procedure {} ({}) blob size {}",
             r.hdr.xid,
@@ -323,8 +320,9 @@ impl NFSState {
                 Nfs4ResponseContent::ReadDir(_s, Some(ref rd)) => {
                     SCLogDebug!("READDIRv4: status {} eof {}", _s, rd.eof);
                     
+                    #[allow(clippy::manual_flatten)]
                     for d in &rd.listing {
-                        if let &Some(ref _d) = d {
+                        if let Some(_d) = d {
                             SCLogDebug!("READDIRv4: dir {}", String::from_utf8_lossy(_d.name));
                         }
                     }
@@ -384,8 +382,8 @@ impl NFSState {
         }
     }
 
-    pub fn process_reply_record_v4<'b>(
-        &mut self, r: &RpcReplyPacket<'b>, xidmap: &mut NFSRequestXidMap,
+    pub fn process_reply_record_v4(
+        &mut self, r: &RpcReplyPacket, xidmap: &mut NFSRequestXidMap,
     ) {
         if xidmap.procedure == NFSPROC4_COMPOUND {
             let mut data = r.prog_data;

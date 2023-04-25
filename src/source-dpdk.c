@@ -178,13 +178,15 @@ void DPDKSetTimevalOfMachineStart(void)
  * @param machine_start_tv - timestamp when the machine was started
  * @param real_tv
  */
-static void DPDKSetTimevalReal(struct timeval *machine_start_tv, struct timeval *real_tv)
+static SCTime_t DPDKSetTimevalReal(struct timeval *machine_start_tv)
 {
-    CyclesAddToTimeval(rte_get_tsc_cycles(), machine_start_tv, real_tv);
+    struct timeval real_tv;
+    CyclesAddToTimeval(rte_get_tsc_cycles(), machine_start_tv, &real_tv);
+    return SCTIME_FROM_TIMEVAL(&real_tv);
 }
 
 /* get number of seconds from the reset of TSC counter (typically from the machine start) */
-static uint64_t DPDKGetSeconds()
+static uint64_t DPDKGetSeconds(void)
 {
     return CyclesToSeconds(rte_get_tsc_cycles());
 }
@@ -377,12 +379,34 @@ static TmEcode ReceiveDPDKLoop(ThreadVars *tv, void *data, void *slot)
                 p->flags |= PKT_IGNORE_CHECKSUM;
             }
 
-            DPDKSetTimevalReal(&machine_start_time, &p->ts);
+            p->ts = DPDKSetTimevalReal(&machine_start_time);
             p->dpdk_v.mbuf = ptv->received_mbufs[i];
             p->ReleasePacket = DPDKReleasePacket;
             p->dpdk_v.copy_mode = ptv->copy_mode;
             p->dpdk_v.out_port_id = ptv->out_port_id;
             p->dpdk_v.out_queue_id = ptv->queue_id;
+            p->livedev = ptv->livedev;
+
+            if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
+                p->flags |= PKT_IGNORE_CHECKSUM;
+            } else if (ptv->checksum_mode == CHECKSUM_VALIDATION_OFFLOAD) {
+                uint64_t ol_flags = ptv->received_mbufs[i]->ol_flags;
+                if ((ol_flags & RTE_MBUF_F_RX_IP_CKSUM_MASK) == RTE_MBUF_F_RX_IP_CKSUM_GOOD &&
+                        (ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) == RTE_MBUF_F_RX_L4_CKSUM_GOOD) {
+                    SCLogDebug("HW detected GOOD IP and L4 chsum, ignoring validation");
+                    p->flags |= PKT_IGNORE_CHECKSUM;
+                } else {
+                    if ((ol_flags & RTE_MBUF_F_RX_IP_CKSUM_MASK) == RTE_MBUF_F_RX_IP_CKSUM_BAD) {
+                        SCLogDebug("HW detected BAD IP checksum");
+                        // chsum recalc will not be triggered but rule keyword check will be
+                        p->level3_comp_csum = 0;
+                    }
+                    if ((ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) == RTE_MBUF_F_RX_L4_CKSUM_BAD) {
+                        SCLogDebug("HW detected BAD L4 chsum");
+                        p->level4_comp_csum = 0;
+                    }
+                }
+            }
 
             PacketSetData(p, rte_pktmbuf_mtod(p->dpdk_v.mbuf, uint8_t *),
                     rte_pktmbuf_pkt_len(p->dpdk_v.mbuf));
@@ -502,6 +526,48 @@ fail:
     SCReturnInt(TM_ECODE_FAILED);
 }
 
+static void PrintDPDKPortXstats(uint32_t port_id, const char *port_name)
+{
+    struct rte_eth_xstat *xstats;
+    struct rte_eth_xstat_name *xstats_names;
+
+    int32_t len = rte_eth_xstats_get(port_id, NULL, 0);
+    if (len < 0)
+        FatalError("Error (%s) getting count of rte_eth_xstats failed on port %s",
+                rte_strerror(-len), port_name);
+
+    xstats = SCCalloc(len, sizeof(*xstats));
+    if (xstats == NULL)
+        FatalError("Failed to allocate memory for the rte_eth_xstat structure");
+
+    int32_t ret = rte_eth_xstats_get(port_id, xstats, len);
+    if (ret < 0 || ret > len) {
+        SCFree(xstats);
+        FatalError("Error (%s) getting rte_eth_xstats failed on port %s", rte_strerror(-ret),
+                port_name);
+    }
+    xstats_names = SCCalloc(len, sizeof(*xstats_names));
+    if (xstats_names == NULL) {
+        SCFree(xstats);
+        FatalError("Failed to allocate memory for the rte_eth_xstat_name array");
+    }
+    ret = rte_eth_xstats_get_names(port_id, xstats_names, len);
+    if (ret < 0 || ret > len) {
+        SCFree(xstats);
+        SCFree(xstats_names);
+        FatalError("Error (%s) getting names of rte_eth_xstats failed on port %s",
+                rte_strerror(-ret), port_name);
+    }
+    for (int32_t i = 0; i < len; i++) {
+        if (xstats[i].value > 0)
+            SCLogPerf("Port %u (%s) - %s: %" PRIu64, port_id, port_name, xstats_names[i].name,
+                    xstats[i].value);
+    }
+
+    SCFree(xstats);
+    SCFree(xstats_names);
+}
+
 /**
  * \brief This function prints stats to the screen at exit.
  * \param tv pointer to ThreadVars
@@ -523,6 +589,9 @@ static void ReceiveDPDKThreadExitStats(ThreadVars *tv, void *data)
                     strerror(-retval));
             SCReturn;
         }
+
+        PrintDPDKPortXstats(ptv->port_id, port_name);
+
         retval = rte_eth_stats_get(ptv->port_id, &eth_stats);
         if (unlikely(retval != 0)) {
             SCLogError("Failed to get stats for interface %s: %s", port_name, strerror(-retval));

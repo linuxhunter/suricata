@@ -65,8 +65,8 @@ struct MQTTSubscribeTopicGetDataArgs {
 };
 
 static InspectionBuffer *MQTTSubscribeTopicGetData(DetectEngineThreadCtx *det_ctx,
-        const DetectEngineTransforms *transforms,
-        Flow *f, struct MQTTSubscribeTopicGetDataArgs *cbdata, int list_id, bool first)
+        const DetectEngineTransforms *transforms, Flow *f,
+        struct MQTTSubscribeTopicGetDataArgs *cbdata, int list_id)
 {
     SCEnter();
 
@@ -74,12 +74,13 @@ static InspectionBuffer *MQTTSubscribeTopicGetData(DetectEngineThreadCtx *det_ct
             InspectionBufferMultipleForListGet(det_ctx, list_id, cbdata->local_id);
     if (buffer == NULL)
         return NULL;
-    if (!first && buffer->inspect != NULL)
+    if (buffer->initialized)
         return buffer;
 
     const uint8_t *data;
     uint32_t data_len;
     if (rs_mqtt_tx_get_subscribe_topic(cbdata->txv, cbdata->local_id, &data, &data_len) == 0) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
     }
 
@@ -101,8 +102,8 @@ static uint8_t DetectEngineInspectMQTTSubscribeTopic(DetectEngineCtx *de_ctx,
 
     while ((subscribe_topic_match_limit == 0) || local_id < subscribe_topic_match_limit) {
         struct MQTTSubscribeTopicGetDataArgs cbdata = { local_id, txv, };
-        InspectionBuffer *buffer = MQTTSubscribeTopicGetData(det_ctx,
-            transforms, f, &cbdata, engine->sm_list, false);
+        InspectionBuffer *buffer =
+                MQTTSubscribeTopicGetData(det_ctx, transforms, f, &cbdata, engine->sm_list);
         if (buffer == NULL || buffer->inspect == NULL)
             break;
 
@@ -151,8 +152,8 @@ static void PrefilterTxMQTTSubscribeTopic(DetectEngineThreadCtx *det_ctx, const 
     uint32_t local_id = 0;
     while ((subscribe_topic_match_limit == 0) || local_id < subscribe_topic_match_limit) {
         struct MQTTSubscribeTopicGetDataArgs cbdata = { local_id, txv };
-        InspectionBuffer *buffer = MQTTSubscribeTopicGetData(det_ctx, ctx->transforms,
-                f, &cbdata, list_id, true);
+        InspectionBuffer *buffer =
+                MQTTSubscribeTopicGetData(det_ctx, ctx->transforms, f, &cbdata, list_id);
         if (buffer == NULL)
             break;
 
@@ -238,7 +239,7 @@ void DetectMQTTSubscribeTopicRegister (void)
 
 static int DetectMQTTSubscribeTopicSetup(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    if (DetectBufferSetActiveList(s, g_mqtt_subscribe_topic_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_mqtt_subscribe_topic_buffer_id) < 0)
         return -1;
     if (DetectSignatureSetAppProto(s, ALPROTO_MQTT) < 0)
         return -1;

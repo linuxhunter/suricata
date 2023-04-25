@@ -58,7 +58,7 @@ FlowBucket *flow_hash;
 SC_ATOMIC_EXTERN(unsigned int, flow_prune_idx);
 SC_ATOMIC_EXTERN(unsigned int, flow_flags);
 
-static Flow *FlowGetUsedFlow(ThreadVars *tv, DecodeThreadVars *dtv, const struct timeval *ts);
+static Flow *FlowGetUsedFlow(ThreadVars *tv, DecodeThreadVars *dtv, const SCTime_t ts);
 
 /** \brief compare two raw ipv6 addrs
  *
@@ -107,6 +107,61 @@ typedef struct FlowHashKey6_ {
         const uint32_t u32[11];
     };
 } FlowHashKey6;
+
+uint32_t FlowGetIpPairProtoHash(const Packet *p)
+{
+    uint32_t hash = 0;
+    if (p->ip4h != NULL) {
+        FlowHashKey4 fhk;
+
+        int ai = (p->src.addr_data32[0] > p->dst.addr_data32[0]);
+        fhk.addrs[1 - ai] = p->src.addr_data32[0];
+        fhk.addrs[ai] = p->dst.addr_data32[0];
+
+        fhk.ports[0] = 0xfedc;
+        fhk.ports[1] = 0xba98;
+
+        fhk.proto = (uint16_t)p->proto;
+        fhk.recur = (uint16_t)p->recursion_level;
+        /* g_vlan_mask sets the vlan_ids to 0 if vlan.use-for-tracking
+         * is disabled. */
+        fhk.vlan_id[0] = p->vlan_id[0] & g_vlan_mask;
+        fhk.vlan_id[1] = p->vlan_id[1] & g_vlan_mask;
+
+        hash = hashword(fhk.u32, 5, flow_config.hash_rand);
+    } else if (p->ip6h != NULL) {
+        FlowHashKey6 fhk;
+        if (FlowHashRawAddressIPv6GtU32(p->src.addr_data32, p->dst.addr_data32)) {
+            fhk.src[0] = p->src.addr_data32[0];
+            fhk.src[1] = p->src.addr_data32[1];
+            fhk.src[2] = p->src.addr_data32[2];
+            fhk.src[3] = p->src.addr_data32[3];
+            fhk.dst[0] = p->dst.addr_data32[0];
+            fhk.dst[1] = p->dst.addr_data32[1];
+            fhk.dst[2] = p->dst.addr_data32[2];
+            fhk.dst[3] = p->dst.addr_data32[3];
+        } else {
+            fhk.src[0] = p->dst.addr_data32[0];
+            fhk.src[1] = p->dst.addr_data32[1];
+            fhk.src[2] = p->dst.addr_data32[2];
+            fhk.src[3] = p->dst.addr_data32[3];
+            fhk.dst[0] = p->src.addr_data32[0];
+            fhk.dst[1] = p->src.addr_data32[1];
+            fhk.dst[2] = p->src.addr_data32[2];
+            fhk.dst[3] = p->src.addr_data32[3];
+        }
+
+        fhk.ports[0] = 0xfedc;
+        fhk.ports[1] = 0xba98;
+        fhk.proto = (uint16_t)p->proto;
+        fhk.recur = (uint16_t)p->recursion_level;
+        fhk.vlan_id[0] = p->vlan_id[0] & g_vlan_mask;
+        fhk.vlan_id[1] = p->vlan_id[1] & g_vlan_mask;
+
+        hash = hashword(fhk.u32, 11, flow_config.hash_rand);
+    }
+    return hash;
+}
 
 /* calculate the hash key for this packet
  *
@@ -455,7 +510,8 @@ static inline int FlowCreateCheck(const Packet *p, const bool emerg)
      * that is not a TCP SYN packet. */
     if (emerg) {
         if (PKT_IS_TCP(p)) {
-            if (p->tcph->th_flags == TH_SYN || !stream_config.midstream) {
+            if (((p->tcph->th_flags & (TH_SYN | TH_ACK | TH_RST | TH_FIN)) == TH_SYN) ||
+                    !stream_config.midstream) {
                 ;
             } else {
                 return 0;
@@ -510,13 +566,13 @@ static inline Flow *FlowSpareSync(ThreadVars *tv, FlowLookupStruct *fls,
     Flow *f = NULL;
     bool spare_sync = false;
     if (emerg) {
-        if ((uint32_t)p->ts.tv_sec > fls->emerg_spare_sync_stamp) {
+        if ((uint32_t)SCTIME_SECS(p->ts) > fls->emerg_spare_sync_stamp) {
             fls->spare_queue = FlowSpareGetFromPool(); /* local empty, (re)populate and try again */
             spare_sync = true;
             f = FlowQueuePrivateGetFromTop(&fls->spare_queue);
             if (f == NULL) {
                 /* wait till next full sec before retrying */
-                fls->emerg_spare_sync_stamp = (uint32_t)p->ts.tv_sec;
+                fls->emerg_spare_sync_stamp = (uint32_t)SCTIME_SECS(p->ts);
             }
         }
     } else {
@@ -587,7 +643,7 @@ static Flow *FlowGetNew(ThreadVars *tv, FlowLookupStruct *fls, Packet *p)
                 FlowWakeupFlowManagerThread();
             }
 
-            f = FlowGetUsedFlow(tv, fls->dtv, &p->ts);
+            f = FlowGetUsedFlow(tv, fls->dtv, p->ts);
             if (f == NULL) {
                 NoFlowHandleIPS(p);
                 return NULL;
@@ -640,8 +696,6 @@ static Flow *TcpReuseReplace(ThreadVars *tv, FlowLookupStruct *fls, FlowBucket *
 #ifdef UNITTESTS
     }
 #endif
-    /* tag flow as reused so future lookups won't find it */
-    old_f->flags |= FLOW_TCP_REUSED;
     /* time out immediately */
     old_f->timeout_at = 0;
     /* get some settings that we move over to the new flow */
@@ -667,6 +721,8 @@ static Flow *TcpReuseReplace(ThreadVars *tv, FlowLookupStruct *fls, FlowBucket *
 
     f->thread_id[0] = thread_id[0];
     f->thread_id[1] = thread_id[1];
+
+    STREAM_PKT_FLAG_SET(p, STREAM_PKT_FLAG_TCP_PORT_REUSE);
     return f;
 }
 
@@ -781,27 +837,22 @@ Flow *FlowGetFlowFromHash(ThreadVars *tv, FlowLookupStruct *fls, Packet *p, Flow
     f = fb->head;
     do {
         Flow *next_f = NULL;
-        const bool timedout =
-            (fb_nextts < (uint32_t)p->ts.tv_sec && FlowIsTimedOut(f, (uint32_t)p->ts.tv_sec, emerg));
+        const bool timedout = (fb_nextts < (uint32_t)SCTIME_SECS(p->ts) &&
+                               FlowIsTimedOut(f, (uint32_t)SCTIME_SECS(p->ts), emerg));
         if (timedout) {
             FLOWLOCK_WRLOCK(f);
-            if (likely(f->use_cnt == 0)) {
-                next_f = f->next;
-                MoveToWorkQueue(tv, fls, fb, f, prev_f);
-                FLOWLOCK_UNLOCK(f);
-                goto flow_removed;
-            }
+            next_f = f->next;
+            MoveToWorkQueue(tv, fls, fb, f, prev_f);
             FLOWLOCK_UNLOCK(f);
+            goto flow_removed;
         } else if (FlowCompare(f, p) != 0) {
             FLOWLOCK_WRLOCK(f);
             /* found a matching flow that is not timed out */
             if (unlikely(TcpSessionPacketSsnReuse(p, f, f->protoctx) == 1)) {
                 Flow *new_f = TcpReuseReplace(tv, fls, fb, f, hash, p);
-                if (likely(f->use_cnt == 0)) {
-                    if (prev_f == NULL) /* if we have no prev it means new_f is now our prev */
-                        prev_f = new_f;
-                    MoveToWorkQueue(tv, fls, fb, f, prev_f); /* evict old flow */
-                }
+                if (prev_f == NULL) /* if we have no prev it means new_f is now our prev */
+                    prev_f = new_f;
+                MoveToWorkQueue(tv, fls, fb, f, prev_f); /* evict old flow */
                 FLOWLOCK_UNLOCK(f); /* unlock old replaced flow */
 
                 if (new_f == NULL) {
@@ -962,8 +1013,7 @@ Flow *FlowGetFromFlowKey(FlowKey *key, struct timespec *ttime, const uint32_t ha
 
     f->protomap = FlowGetProtoMapping(f->proto);
     /* set timestamp to now */
-    f->startts.tv_sec = ttime->tv_sec;
-    f->startts.tv_usec = ttime->tv_nsec * 1000;
+    f->startts = SCTIME_FROM_TIMESPEC(ttime);
     f->lastts = f->startts;
 
     FlowBucket *fb = &flow_hash[hash % flow_config.hash_size];
@@ -1054,26 +1104,26 @@ static inline uint32_t GetUsedAtomicUpdate(const uint32_t val)
 /** \internal
  *  \brief check if flow has just seen an update.
  */
-static inline bool StillAlive(const Flow *f, const struct timeval *ts)
+static inline bool StillAlive(const Flow *f, const SCTime_t ts)
 {
     switch (f->flow_state) {
         case FLOW_STATE_NEW:
-            if (ts->tv_sec - f->lastts.tv_sec <= 1) {
+            if (SCTIME_SECS(ts) - SCTIME_SECS(f->lastts) <= 1) {
                 return true;
             }
             break;
         case FLOW_STATE_ESTABLISHED:
-            if (ts->tv_sec - f->lastts.tv_sec <= 5) {
+            if (SCTIME_SECS(ts) - SCTIME_SECS(f->lastts) <= 5) {
                 return true;
             }
             break;
         case FLOW_STATE_CLOSED:
-            if (ts->tv_sec - f->lastts.tv_sec <= 3) {
+            if (SCTIME_SECS(ts) - SCTIME_SECS(f->lastts) <= 3) {
                 return true;
             }
             break;
         default:
-            if (ts->tv_sec - f->lastts.tv_sec < 30) {
+            if (SCTIME_SECS(ts) - SCTIME_SECS(f->lastts) < 30) {
                 return true;
             }
             break;
@@ -1096,8 +1146,8 @@ static inline bool StillAlive(const Flow *f, const struct timeval *ts)
  *
  *  Called in conditions where the spare queue is empty and memcap is reached.
  *
- *  Walks the hash until a flow can be freed. Timeouts are disregarded, use_cnt
- *  is adhered to. "flow_prune_idx" atomic int makes sure we don't start at the
+ *  Walks the hash until a flow can be freed. Timeouts are disregarded.
+ *  "flow_prune_idx" atomic int makes sure we don't start at the
  *  top each time since that would clear the top of the hash leading to longer
  *  and longer search times under high pressure (observed).
  *
@@ -1106,7 +1156,7 @@ static inline bool StillAlive(const Flow *f, const struct timeval *ts)
  *
  *  \retval f flow or NULL
  */
-static Flow *FlowGetUsedFlow(ThreadVars *tv, DecodeThreadVars *dtv, const struct timeval *ts)
+static Flow *FlowGetUsedFlow(ThreadVars *tv, DecodeThreadVars *dtv, const SCTime_t ts)
 {
     uint32_t idx = GetUsedAtomicUpdate(FLOW_GET_NEW_TRIES) % flow_config.hash_size;
     uint32_t tried = 0;
@@ -1121,7 +1171,7 @@ static Flow *FlowGetUsedFlow(ThreadVars *tv, DecodeThreadVars *dtv, const struct
 
         FlowBucket *fb = &flow_hash[idx];
 
-        if (SC_ATOMIC_GET(fb->next_ts) == INT_MAX)
+        if (SC_ATOMIC_GET(fb->next_ts) == UINT_MAX)
             continue;
 
         if (GetUsedTryLockBucket(fb) != 0) {
@@ -1138,15 +1188,6 @@ static Flow *FlowGetUsedFlow(ThreadVars *tv, DecodeThreadVars *dtv, const struct
         if (GetUsedTryLockFlow(f) != 0) {
             STATSADDUI64(counter_flow_get_used_eval_busy, 1);
             FBLOCK_UNLOCK(fb);
-            continue;
-        }
-
-        /** never prune a flow that is used by a packet or stream msg
-         *  we are currently processing in one of the threads */
-        if (f->use_cnt > 0) {
-            STATSADDUI64(counter_flow_get_used_eval_busy, 1);
-            FBLOCK_UNLOCK(fb);
-            FLOWLOCK_UNLOCK(f);
             continue;
         }
 

@@ -210,7 +210,7 @@ static void DetectHttpUriSetupCallback(const DetectEngineCtx *de_ctx,
  */
 static int DetectHttpUriSetupSticky(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    if (DetectBufferSetActiveList(s, g_http_uri_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_http_uri_buffer_id) < 0)
         return -1;
     if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) < 0)
         return -1;
@@ -224,7 +224,7 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
     SCEnter();
 
     InspectionBuffer *buffer = InspectionBufferGet(det_ctx, list_id);
-    if (buffer->inspect == NULL) {
+    if (!buffer->initialized) {
         htp_tx_t *tx = (htp_tx_t *)txv;
         HtpTxUserData *tx_ud = htp_tx_get_user_data(tx);
 
@@ -250,7 +250,7 @@ static InspectionBuffer *GetData2(DetectEngineThreadCtx *det_ctx,
     SCEnter();
 
     InspectionBuffer *buffer = InspectionBufferGet(det_ctx, list_id);
-    if (buffer->inspect == NULL) {
+    if (!buffer->initialized) {
         uint32_t b_len = 0;
         const uint8_t *b = NULL;
 
@@ -305,7 +305,7 @@ static void DetectHttpRawUriSetupCallback(const DetectEngineCtx *de_ctx,
  */
 static int DetectHttpRawUriSetupSticky(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
-    if (DetectBufferSetActiveList(s, g_http_raw_uri_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_http_raw_uri_buffer_id) < 0)
         return -1;
     if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) < 0)
         return -1;
@@ -319,7 +319,7 @@ static InspectionBuffer *GetRawData(DetectEngineThreadCtx *det_ctx,
     SCEnter();
 
     InspectionBuffer *buffer = InspectionBufferGet(det_ctx, list_id);
-    if (buffer->inspect == NULL) {
+    if (!buffer->initialized) {
         htp_tx_t *tx = (htp_tx_t *)txv;
         if (unlikely(tx->request_uri == NULL)) {
             return NULL;

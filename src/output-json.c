@@ -804,7 +804,7 @@ JsonBuilder *CreateEveHeader(const Packet *p, enum OutputJsonLogDirection dir,
         return NULL;
     }
 
-    CreateIsoTimeString(&p->ts, timebuf, sizeof(timebuf));
+    CreateIsoTimeString(p->ts, timebuf, sizeof(timebuf));
 
     jb_set_string(js, "timestamp", timebuf);
 
@@ -1017,7 +1017,7 @@ static int LogFileTypePrepare(
     else if (log_filetype == LOGFILE_TYPE_PLUGIN) {
         if (json_ctx->file_ctx->threaded) {
             /* Prepare for threaded log output. */
-            if (!SCLogOpenThreadedFile(NULL, NULL, json_ctx->file_ctx, 1)) {
+            if (!SCLogOpenThreadedFile(NULL, NULL, json_ctx->file_ctx)) {
                 return -1;
             }
         }

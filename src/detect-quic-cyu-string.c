@@ -49,7 +49,7 @@ struct QuicStringGetDataArgs {
 
 static int DetectQuicCyuStringSetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
-    if (DetectBufferSetActiveList(s, g_buffer_id) < 0)
+    if (DetectBufferSetActiveList(de_ctx, s, g_buffer_id) < 0)
         return -1;
 
     if (DetectSignatureSetAppProto(s, ALPROTO_QUIC) < 0)
@@ -60,7 +60,7 @@ static int DetectQuicCyuStringSetup(DetectEngineCtx *de_ctx, Signature *s, const
 
 static InspectionBuffer *QuicStringGetData(DetectEngineThreadCtx *det_ctx,
         const DetectEngineTransforms *transforms, Flow *f, struct QuicStringGetDataArgs *cbdata,
-        int list_id, bool first)
+        int list_id)
 {
     SCEnter();
 
@@ -68,12 +68,13 @@ static InspectionBuffer *QuicStringGetData(DetectEngineThreadCtx *det_ctx,
             InspectionBufferMultipleForListGet(det_ctx, list_id, cbdata->local_id);
     if (buffer == NULL)
         return NULL;
-    if (!first && buffer->inspect != NULL)
+    if (buffer->initialized)
         return buffer;
 
     const uint8_t *data;
     uint32_t data_len;
     if (rs_quic_tx_get_cyu_string(cbdata->txv, cbdata->local_id, &data, &data_len) == 0) {
+        InspectionBufferSetupMultiEmpty(buffer);
         return NULL;
     }
 
@@ -99,7 +100,7 @@ static uint8_t DetectEngineInspectQuicString(DetectEngineCtx *de_ctx,
             txv,
         };
         InspectionBuffer *buffer =
-                QuicStringGetData(det_ctx, transforms, f, &cbdata, engine->sm_list, false);
+                QuicStringGetData(det_ctx, transforms, f, &cbdata, engine->sm_list);
         if (buffer == NULL || buffer->inspect == NULL)
             break;
 
@@ -140,8 +141,7 @@ static void PrefilterTxQuicString(DetectEngineThreadCtx *det_ctx, const void *pe
         // loop until we get a NULL
 
         struct QuicStringGetDataArgs cbdata = { local_id, txv };
-        InspectionBuffer *buffer =
-                QuicStringGetData(det_ctx, ctx->transforms, f, &cbdata, list_id, true);
+        InspectionBuffer *buffer = QuicStringGetData(det_ctx, ctx->transforms, f, &cbdata, list_id);
         if (buffer == NULL)
             break;
 

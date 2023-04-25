@@ -38,7 +38,6 @@ pub const STREAM_TOCLIENT: u8 = 0x08;
 pub const STREAM_GAP:      u8 = 0x10;
 pub const STREAM_DEPTH:    u8 = 0x20;
 pub const STREAM_MIDSTREAM:u8 = 0x40;
-pub const STREAM_FLUSH:    u8 = 0x80;
 pub const DIR_BOTH:        u8 = 0b0000_1100;
 const DIR_TOSERVER:        u8 = 0b0000_0100;
 const DIR_TOCLIENT:        u8 = 0b0000_1000;
@@ -48,6 +47,18 @@ const DIR_TOCLIENT:        u8 = 0b0000_1000;
 pub enum Direction {
     ToServer = 0x04,
     ToClient = 0x08,
+}
+
+impl Direction {
+    /// Return true if the direction is to server.
+    pub fn is_to_server(&self) -> bool {
+	matches!(self, Self::ToServer)
+    }
+
+    /// Return true if the direction is to client.
+    pub fn is_to_client(&self) -> bool {
+	matches!(self, Self::ToClient)
+    }
 }
 
 impl Default for Direction {
@@ -152,6 +163,7 @@ pub enum HttpRangeContainerBlock {}
 pub type SCHttpRangeFreeBlock = extern "C" fn (
         c: *mut HttpRangeContainerBlock);
 pub type SCHTPFileCloseHandleRange = extern "C" fn (
+        sbcfg: &StreamingBufferConfig,
         fc: *mut FileContainer,
         flags: u16,
         c: *mut HttpRangeContainerBlock,
@@ -166,21 +178,23 @@ pub type SCFileOpenFileWithId = extern "C" fn (
         flags: u16) -> i32;
 pub type SCFileCloseFileById = extern "C" fn (
         file_container: &FileContainer,
+        sbcfg: &StreamingBufferConfig,
         track_id: u32,
         data: *const u8, data_len: u32,
         flags: u16) -> i32;
 pub type SCFileAppendDataById = extern "C" fn (
         file_container: &FileContainer,
+        sbcfg: &StreamingBufferConfig,
         track_id: u32,
         data: *const u8, data_len: u32) -> i32;
 pub type SCFileAppendGAPById = extern "C" fn (
         file_container: &FileContainer,
+        sbcfg: &StreamingBufferConfig,
         track_id: u32,
         data: *const u8, data_len: u32) -> i32;
-pub type SCFilePrune = extern "C" fn (
-        file_container: &FileContainer);
 pub type SCFileContainerRecycle = extern "C" fn (
-        file_container: &FileContainer);
+        file_container: &FileContainer,
+        sbcfg: &StreamingBufferConfig);
 
 // A Suricata context that is passed in from C. This is alternative to
 // using functions from Suricata directly, so they can be wrapped so
@@ -206,7 +220,6 @@ pub struct SuricataContext {
     pub FileAppendData: SCFileAppendDataById,
     pub FileAppendGAP: SCFileAppendGAPById,
     pub FileContainerRecycle: SCFileContainerRecycle,
-    pub FilePrune: SCFilePrune,
 
     pub AppLayerRegisterParser: extern fn(parser: *const crate::applayer::RustParser, alproto: AppProto) -> std::os::raw::c_int,
 }
@@ -312,5 +325,19 @@ impl Flow {
     /// Return flow ports
     pub fn get_ports(&self) -> (u16, u16) {
         unsafe { (FlowGetSourcePort(self), FlowGetDestinationPort(self)) }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_direction() {
+	assert!(Direction::ToServer.is_to_server());
+	assert!(!Direction::ToServer.is_to_client());
+
+	assert!(Direction::ToClient.is_to_client());
+	assert!(!Direction::ToClient.is_to_server());
     }
 }

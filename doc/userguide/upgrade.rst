@@ -36,10 +36,14 @@ Upgrading 6.0 to 7.0
 Major changes
 ~~~~~~~~~~~~~
 - Upgrade of PCRE1 to PCRE2. See :ref:`pcre-update-v1-to-v2` for more details.
+- IPS users: by default various new "exception policies" are set to DROP
+  traffic. Please see :ref:`Exception Policies <exception policies>` for details
+  on the settings and their scope.
 
 Security changes
 ~~~~~~~~~~~~~~~~
 - suricata.yaml now prevents process creation by Suricata by default with `security.limit-noproc`.
+  The suricata.yaml configuration file needs to be updated to enable this feature.
   For more info, see :ref:`suricata-yaml-config-hardening`.
 
 Removals

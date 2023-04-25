@@ -36,7 +36,7 @@
  *  \retval LogCustomFormatNode * ptr if created
  *  \retval NULL if failed to allocate
  */
-LogCustomFormatNode * LogCustomFormatNodeAlloc()
+LogCustomFormatNode *LogCustomFormatNodeAlloc(void)
 {
     LogCustomFormatNode * node = SCCalloc(1, sizeof(LogCustomFormatNode));
     if (unlikely(node == NULL)) {
@@ -51,7 +51,7 @@ LogCustomFormatNode * LogCustomFormatNodeAlloc()
  *  \retval LogCustomFormat * ptr if created
  *  \retval NULL if failed to allocate
  */
-LogCustomFormat * LogCustomFormatAlloc()
+LogCustomFormat *LogCustomFormatAlloc(void)
 {
     LogCustomFormat * cf = SCCalloc(1, sizeof(LogCustomFormat));
     if (unlikely(cf == NULL)) {
@@ -208,9 +208,10 @@ void LogCustomFormatAddNode(LogCustomFormat *cf, LogCustomFormatNode *node)
  *  \param const struct timeveal *ts  - the timetstamp
  *
  */
-void LogCustomFormatWriteTimestamp(MemBuffer *buffer, const char *fmt, const struct timeval *ts) {
+void LogCustomFormatWriteTimestamp(MemBuffer *buffer, const char *fmt, const SCTime_t ts)
+{
 
-    time_t time = ts->tv_sec;
+    time_t time = SCTIME_SECS(ts);
     struct tm local_tm;
     struct tm *timestamp = SCLocalTime(time, &local_tm);
     char buf[128] = {0};
@@ -242,15 +243,14 @@ static int LogCustomFormatTest01(void)
     tm.tm_wday = 1;
     tm.tm_yday = 13;
     tm.tm_isdst = 0;
-    time_t secs = mktime(&tm);
-    struct timeval ts = {secs, 0};
+    SCTime_t ts = SCTIME_FROM_SECS(mktime(&tm));
 
     MemBuffer *buffer = MemBufferCreateNew(62);
     if (!buffer) {
         return 0;
     }
 
-    LogCustomFormatWriteTimestamp(buffer, "", &ts);
+    LogCustomFormatWriteTimestamp(buffer, "", ts);
     /*
      * {buffer = "01/13/14-04:30:00", size = 62, offset = 17}
      */

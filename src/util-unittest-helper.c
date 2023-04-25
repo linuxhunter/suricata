@@ -165,7 +165,7 @@ Packet *UTHBuildPacketIPV6Real(uint8_t *payload, uint16_t payload_len,
     if (unlikely(p == NULL))
         return NULL;
 
-    TimeGet(&p->ts);
+    p->ts = TimeGet();
 
     p->src.family = AF_INET6;
     p->dst.family = AF_INET6;
@@ -251,9 +251,7 @@ Packet *UTHBuildPacketReal(uint8_t *payload, uint16_t payload_len,
     if (unlikely(p == NULL))
         return NULL;
 
-    struct timeval tv;
-    TimeGet(&tv);
-    COPY_TIMESTAMP(&tv, &p->ts);
+    p->ts = TimeGet();
 
     p->src.family = AF_INET;
     p->dst.family = AF_INET;
@@ -542,7 +540,7 @@ int UTHAddStreamToFlow(Flow *f, int direction,
 
     StreamingBufferSegment seg;
     TcpStream *stream = direction == 0 ? &ssn->client : &ssn->server;
-    int r = StreamingBufferAppend(&stream->sb, &seg, data, data_len);
+    int r = StreamingBufferAppend(&stream->sb, &stream_config.sbcnf, &seg, data, data_len);
     FAIL_IF_NOT(r == 0);
     stream->last_ack += data_len;
     return 1;
@@ -557,7 +555,7 @@ int UTHAddSessionToFlow(Flow *f,
     TcpSession *ssn = SCCalloc(1, sizeof(*ssn));
     FAIL_IF_NULL(ssn);
 
-    StreamingBuffer x = STREAMING_BUFFER_INITIALIZER(&stream_config.sbcnf);
+    StreamingBuffer x = STREAMING_BUFFER_INITIALIZER;
     ssn->client.sb = x;
     ssn->server.sb = x;
 
@@ -910,7 +908,6 @@ uint32_t UTHBuildPacketOfFlows(uint32_t start, uint32_t end, uint8_t dir)
         }
         FlowHandlePacket(NULL, &fls, p);
         if (p->flow != NULL) {
-            p->flow->use_cnt = 0;
             FLOWLOCK_UNLOCK(p->flow);
         }
 

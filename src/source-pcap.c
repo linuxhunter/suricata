@@ -239,16 +239,14 @@ static void PcapCallbackLoop(char *user, struct pcap_pkthdr *h, u_char *pkt)
 
     PcapThreadVars *ptv = (PcapThreadVars *)user;
     Packet *p = PacketGetFromQueueOrAlloc();
-    struct timeval current_time;
 
     if (unlikely(p == NULL)) {
         SCReturn;
     }
 
     PKT_SET_SRC(p, PKT_SRC_WIRE);
-    p->ts.tv_sec = h->ts.tv_sec;
-    p->ts.tv_usec = h->ts.tv_usec;
-    SCLogDebug("p->ts.tv_sec %"PRIuMAX"", (uintmax_t)p->ts.tv_sec);
+    p->ts = SCTIME_FROM_TIMEVAL(&h->ts);
+    SCLogDebug("p->ts.tv_sec %" PRIuMAX "", (uintmax_t)SCTIME_SECS(p->ts));
     p->datalink = ptv->datalink;
 
     ptv->pkts++;
@@ -283,10 +281,10 @@ static void PcapCallbackLoop(char *user, struct pcap_pkthdr *h, u_char *pkt)
     }
 
     /* Trigger one dump of stats every second */
-    TimeGet(&current_time);
-    if (current_time.tv_sec != ptv->last_stats_dump) {
+    SCTime_t current_time = TimeGet();
+    if ((time_t)SCTIME_SECS(current_time) != ptv->last_stats_dump) {
         PcapDumpCounters(ptv);
-        ptv->last_stats_dump = current_time.tv_sec;
+        ptv->last_stats_dump = SCTIME_SECS(current_time);
     }
 
     SCReturn;
@@ -325,7 +323,7 @@ static TmEcode ReceivePcapLoop(ThreadVars *tv, void *data, void *slot)
 
         int r = pcap_dispatch(ptv->pcap_handle, packet_q_len,
                           (pcap_handler)PcapCallbackLoop, (u_char *)ptv);
-        if (unlikely(r == 0 || r == PCAP_ERROR_BREAK)) {
+        if (unlikely(r == 0 || r == PCAP_ERROR_BREAK || (r > 0 && r < packet_q_len))) {
             if (r == PCAP_ERROR_BREAK && ptv->cb_result == TM_ECODE_FAILED) {
                 SCReturnInt(TM_ECODE_FAILED);
             }

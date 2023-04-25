@@ -74,15 +74,11 @@ typedef enum {
 } SCLogOPType;
 
 /* The default log_format, if it is not supplied by the user */
-#define SC_LOG_DEF_FILE_FORMAT      "[%i - %m] %t %d: %S: %M"
-#define SC_LOG_DEF_LOG_FORMAT_REL   "%D: %S: %M"
-#define SC_LOG_DEF_LOG_FORMAT_RELV  "%d: %S: %M"
-#define SC_LOG_DEF_LOG_FORMAT_RELVV "[%i] %d: %S: %M"
-#ifdef DEBUG
-#define SC_LOG_DEF_LOG_FORMAT_DEV "%d: %S: %M [%f:%l]"
-#else
-#define SC_LOG_DEF_LOG_FORMAT_DEV "%d: %S: %M [%f:%l]"
-#endif
+#define SC_LOG_DEF_FILE_FORMAT           "[%i - %m] %z %d: %S: %M"
+#define SC_LOG_DEF_LOG_FORMAT_REL_NOTICE "%D: %S: %M"
+#define SC_LOG_DEF_LOG_FORMAT_REL_INFO   "%d: %S: %M"
+#define SC_LOG_DEF_LOG_FORMAT_REL_CONFIG "[%i] %d: %S: %M"
+#define SC_LOG_DEF_LOG_FORMAT_DEBUG      "%d: %S: %M [%n:%f:%l]"
 
 /* The maximum length of the log message */
 #define SC_LOG_MAX_LOG_MSG_LEN 2048
@@ -188,7 +184,8 @@ typedef struct SCLogConfig_ {
 } SCLogConfig;
 
 /* The different log format specifiers supported by the API */
-#define SC_LOG_FMT_TIME             't' /* Timestamp in standard format */
+#define SC_LOG_FMT_TIME             'z' /* Timestamp in RFC3339 like format */
+#define SC_LOG_FMT_TIME_LEGACY      't' /* Timestamp in legacy format */
 #define SC_LOG_FMT_PID              'p' /* PID */
 #define SC_LOG_FMT_TID              'i' /* Thread ID */
 #define SC_LOG_FMT_TM               'm' /* Thread module name */

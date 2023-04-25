@@ -1,5 +1,5 @@
 /* vi: set et ts=4: */
-/* Copyright (C) 2007-2021 Open Information Security Foundation
+/* Copyright (C) 2007-2022 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -47,7 +47,8 @@
 
 #define LOGFILE_NAME_MAX 255
 
-static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append, int i);
+static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append,
+        ThreadLogFileHashEntry *entry);
 
 // Threaded eve.json identifier
 static SC_ATOMIC_DECL_AND_INIT_WITH_VAL(uint32_t, eve_file_id, 1);
@@ -323,13 +324,51 @@ static void SCLogFileClose(LogFileCtx *log_ctx)
     SCMutexUnlock(&log_ctx->fp_mutex);
 }
 
-bool SCLogOpenThreadedFile(
-        const char *log_path, const char *append, LogFileCtx *parent_ctx, int slot_count)
+static char ThreadLogFileHashCompareFunc(
+        void *data1, uint16_t datalen1, void *data2, uint16_t datalen2)
+{
+    ThreadLogFileHashEntry *p1 = (ThreadLogFileHashEntry *)data1;
+    ThreadLogFileHashEntry *p2 = (ThreadLogFileHashEntry *)data2;
+
+    if (p1 == NULL || p2 == NULL)
+        return 0;
+
+    return p1->thread_id == p2->thread_id;
+}
+static uint32_t ThreadLogFileHashFunc(HashTable *ht, void *data, uint16_t datalen)
+{
+    const ThreadLogFileHashEntry *ent = (ThreadLogFileHashEntry *)data;
+
+    return ent->thread_id % ht->array_size;
+}
+
+static void ThreadLogFileHashFreeFunc(void *data)
+{
+    BUG_ON(data == NULL);
+    ThreadLogFileHashEntry *thread_ent = (ThreadLogFileHashEntry *)data;
+
+    if (thread_ent) {
+        LogFileCtx *lf_ctx = thread_ent->ctx;
+        /* Free the leaf log file entries */
+        if (!lf_ctx->threaded) {
+            LogFileFreeCtx(lf_ctx);
+        }
+        SCFree(thread_ent);
+    }
+}
+
+bool SCLogOpenThreadedFile(const char *log_path, const char *append, LogFileCtx *parent_ctx)
 {
         parent_ctx->threads = SCCalloc(1, sizeof(LogThreadedFileCtx));
         if (!parent_ctx->threads) {
             SCLogError("Unable to allocate threads container");
             return false;
+        }
+
+        parent_ctx->threads->ht = HashTableInit(255, ThreadLogFileHashFunc,
+                ThreadLogFileHashCompareFunc, ThreadLogFileHashFreeFunc);
+        if (!parent_ctx->threads->ht) {
+            FatalError("Unable to initialize thread/entry hash table");
         }
 
         parent_ctx->threads->append = SCStrdup(append == NULL ? DEFAULT_LOG_MODE_APPEND : append);
@@ -338,30 +377,16 @@ bool SCLogOpenThreadedFile(
             goto error_exit;
         }
 
-        parent_ctx->threads->slot_count = slot_count;
-        parent_ctx->threads->lf_slots = SCCalloc(slot_count, sizeof(LogFileCtx *));
-        if (!parent_ctx->threads->lf_slots) {
-            SCLogError("Unable to allocate thread slots");
-            goto error_exit;
-        }
-        SCLogDebug("Allocated %d file context pointers for threaded array",
-                    parent_ctx->threads->slot_count);
-        for (int slot = 1; slot < parent_ctx->threads->slot_count; slot++) {
-            if (!LogFileNewThreadedCtx(parent_ctx, log_path, parent_ctx->threads->append, slot)) {
-                /* TODO: clear allocated entries [1, slot) */
-                goto error_exit;
-            }
-        }
         SCMutexInit(&parent_ctx->threads->mutex, NULL);
         return true;
 
 error_exit:
 
-        if (parent_ctx->threads->lf_slots) {
-            SCFree(parent_ctx->threads->lf_slots);
-        }
         if (parent_ctx->threads->append) {
             SCFree(parent_ctx->threads->append);
+        }
+        if (parent_ctx->threads->ht) {
+            HashTableFree(parent_ctx->threads->ht);
         }
         SCFree(parent_ctx->threads);
         parent_ctx->threads = NULL;
@@ -563,7 +588,7 @@ SCConfLogOpenGeneric(ConfNode *conf,
             if (log_ctx->fp == NULL)
                 return -1; // Error already logged by Open...Fp routine
         } else {
-            if (!SCLogOpenThreadedFile(log_path, append, log_ctx, 1)) {
+            if (!SCLogOpenThreadedFile(log_path, append, log_ctx)) {
                 return -1;
             }
         }
@@ -646,61 +671,76 @@ LogFileCtx *LogFileNewCtx(void)
     return lf_ctx;
 }
 
+/** \brief LogFileThread2Slot() Return a file entry
+ * \retval ThreadLogFileHashEntry * file entry for caller
+ *
+ * This function returns the file entry for the calling thread.
+ * Each thread -- identified by its operating system thread-id -- has its
+ * own file entry that includes a file pointer.
+ */
+static ThreadLogFileHashEntry *LogFileThread2Slot(LogThreadedFileCtx *parent)
+{
+    ThreadLogFileHashEntry thread_hash_entry;
+
+    /* Check hash table for thread id*/
+    thread_hash_entry.thread_id = SCGetThreadIdLong();
+    ThreadLogFileHashEntry *ent =
+            HashTableLookup(parent->ht, &thread_hash_entry, sizeof(thread_hash_entry));
+
+    if (!ent) {
+        ent = SCCalloc(1, sizeof(*ent));
+        if (!ent) {
+            FatalError("Unable to allocate thread/entry entry");
+        }
+        ent->thread_id = thread_hash_entry.thread_id;
+        SCLogDebug("Trying to add thread %ld to entry %d", ent->thread_id, ent->slot_number);
+        if (0 != HashTableAdd(parent->ht, ent, 0)) {
+            FatalError("Unable to add thread/entry mapping");
+        }
+    }
+    return ent;
+}
+
 /** \brief LogFileEnsureExists() Ensure a log file context for the thread exists
  * \param parent_ctx
- * \param thread_id
  * \retval LogFileCtx * pointer if successful; NULL otherwise
  */
-LogFileCtx *LogFileEnsureExists(LogFileCtx *parent_ctx, int thread_id)
+LogFileCtx *LogFileEnsureExists(LogFileCtx *parent_ctx)
 {
     /* threaded output disabled */
     if (!parent_ctx->threaded)
         return parent_ctx;
 
-    SCLogDebug("Adding reference %d to file ctx %p", thread_id, parent_ctx);
     SCMutexLock(&parent_ctx->threads->mutex);
-    /* are there enough context slots already */
-    if (thread_id < parent_ctx->threads->slot_count) {
-        /* has it been opened yet? */
-        if (!parent_ctx->threads->lf_slots[thread_id]) {
-            SCLogDebug("Opening new file for %d reference to file ctx %p", thread_id, parent_ctx);
-            LogFileNewThreadedCtx(parent_ctx, parent_ctx->filename, parent_ctx->threads->append, thread_id);
+    /* Find this thread's entry */
+    ThreadLogFileHashEntry *entry = LogFileThread2Slot(parent_ctx->threads);
+    SCLogDebug("Adding reference for thread %ld [slot %d] to file %s [ctx %p]", SCGetThreadIdLong(),
+            entry->slot_number, parent_ctx->filename, parent_ctx);
+
+    bool new = entry->isopen;
+    /* has it been opened yet? */
+    if (!entry->isopen) {
+        SCLogDebug("Opening new file for thread/slot %d to file %s [ctx %p]", entry->slot_number,
+                parent_ctx->filename, parent_ctx);
+        if (LogFileNewThreadedCtx(
+                    parent_ctx, parent_ctx->filename, parent_ctx->threads->append, entry)) {
+            entry->isopen = true;
+        } else {
+            SCLogError(
+                    "Unable to open slot %d for file %s", entry->slot_number, parent_ctx->filename);
+            (void)HashTableRemove(parent_ctx->threads->ht, entry, 0);
         }
-        SCMutexUnlock(&parent_ctx->threads->mutex);
-        SCLogDebug("Existing file for %d reference to file ctx %p", thread_id, parent_ctx);
-        return parent_ctx->threads->lf_slots[thread_id];
     }
-
-    /* ensure there's a slot for the caller */
-    int new_size = MAX(parent_ctx->threads->slot_count << 1, thread_id + 1);
-    SCLogDebug("Increasing slot count; current %d, trying %d",
-            parent_ctx->threads->slot_count, new_size);
-    LogFileCtx **new_array = SCRealloc(parent_ctx->threads->lf_slots, new_size * sizeof(LogFileCtx *));
-    if (new_array == NULL) {
-        /* Try one more time */
-        SCLogDebug("Unable to increase file context array size to %d; trying %d",
-                new_size, thread_id + 1);
-        new_size = thread_id + 1;
-        new_array = SCRealloc(parent_ctx->threads->lf_slots, new_size * sizeof(LogFileCtx *));
-    }
-
-    if (new_array == NULL) {
-        SCMutexUnlock(&parent_ctx->threads->mutex);
-        SCLogError("Unable to increase file context array size to %d", new_size);
-        return NULL;
-    }
-
-    parent_ctx->threads->lf_slots = new_array;
-    /* initialize newly added slots */
-    for (int i = parent_ctx->threads->slot_count; i < new_size; i++) {
-        parent_ctx->threads->lf_slots[i] = NULL;
-    }
-    parent_ctx->threads->slot_count = new_size;
-    LogFileNewThreadedCtx(parent_ctx, parent_ctx->filename, parent_ctx->threads->append, thread_id);
-
     SCMutexUnlock(&parent_ctx->threads->mutex);
 
-    return parent_ctx->threads->lf_slots[thread_id];
+    if (sc_log_global_log_level >= SC_LOG_DEBUG) {
+        if (new) {
+            SCLogDebug("Existing file for thread/entry %p reference to file %s [ctx %p]", entry,
+                    parent_ctx->filename, parent_ctx);
+        }
+    }
+
+    return entry->ctx;
 }
 
 /** \brief LogFileThreadedName() Create file name for threaded EVE storage
@@ -757,13 +797,14 @@ static bool LogFileThreadedName(
  * \param parent_ctx
  * \param log_path
  * \param append
- * \param thread_id
+ * \param entry
  */
-static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append, int thread_id)
+static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append,
+        ThreadLogFileHashEntry *entry)
 {
     LogFileCtx *thread = SCCalloc(1, sizeof(LogFileCtx));
     if (!thread) {
-        SCLogError("Unable to allocate thread file context slot %d", thread_id);
+        SCLogError("Unable to allocate thread file context entry %p", entry);
         return false;
     }
 
@@ -781,7 +822,7 @@ static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, 
         }
         thread->filename = SCStrdup(fname);
         if (!thread->filename) {
-            SCLogError("Unable to duplicate filename for context slot %d", thread_id);
+            SCLogError("Unable to duplicate filename for context entry %p", entry);
             goto error;
         }
         thread->is_regular = true;
@@ -789,14 +830,15 @@ static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, 
         thread->Close = SCLogFileCloseNoLock;
         OutputRegisterFileRotationFlag(&thread->rotation_flag);
     } else if (parent_ctx->type == LOGFILE_TYPE_PLUGIN) {
+        entry->slot_number = SC_ATOMIC_ADD(eve_file_id, 1);
         thread->plugin.plugin->ThreadInit(
-                thread->plugin.init_data, thread_id, &thread->plugin.thread_data);
+                thread->plugin.init_data, entry->slot_number, &thread->plugin.thread_data);
     }
     thread->threaded = false;
     thread->parent = parent_ctx;
-    thread->id = thread_id;
+    thread->entry = entry;
+    entry->ctx = thread;
 
-    parent_ctx->threads->lf_slots[thread_id] = thread;
     return true;
 
 error:
@@ -806,10 +848,10 @@ error:
             thread->Close(thread);
         }
     }
+
     if (thread) {
         SCFree(thread);
     }
-    parent_ctx->threads->lf_slots[thread_id] = NULL;
     return false;
 }
 
@@ -823,45 +865,26 @@ int LogFileFreeCtx(LogFileCtx *lf_ctx)
         SCReturnInt(0);
     }
 
+    if (lf_ctx->type == LOGFILE_TYPE_PLUGIN) {
+        lf_ctx->plugin.plugin->Deinit(lf_ctx->plugin.init_data);
+    }
+
     if (lf_ctx->threaded) {
         BUG_ON(lf_ctx->threads == NULL);
         SCMutexDestroy(&lf_ctx->threads->mutex);
-        for(int i = 0; i < lf_ctx->threads->slot_count; i++) {
-            if (!lf_ctx->threads->lf_slots[i]) {
-                continue;
-            }
-            LogFileCtx *this_ctx = lf_ctx->threads->lf_slots[i];
-
-            if (lf_ctx->type != LOGFILE_TYPE_PLUGIN) {
-                OutputUnregisterFileRotationFlag(&this_ctx->rotation_flag);
-                this_ctx->Close(this_ctx);
-            } else {
-                lf_ctx->plugin.plugin->ThreadDeinit(
-                        this_ctx->plugin.init_data, this_ctx->plugin.thread_data);
-            }
-            SCFree(lf_ctx->threads->lf_slots[i]->filename);
-            SCFree(lf_ctx->threads->lf_slots[i]);
-        }
-        SCFree(lf_ctx->threads->lf_slots);
         if (lf_ctx->threads->append)
             SCFree(lf_ctx->threads->append);
+        if (lf_ctx->threads->ht) {
+            HashTableFree(lf_ctx->threads->ht);
+        }
         SCFree(lf_ctx->threads);
     } else {
         if (lf_ctx->type != LOGFILE_TYPE_PLUGIN) {
             if (lf_ctx->fp != NULL) {
                 lf_ctx->Close(lf_ctx);
             }
-            if (lf_ctx->parent) {
-                SCMutexLock(&lf_ctx->parent->threads->mutex);
-                lf_ctx->parent->threads->lf_slots[lf_ctx->id] = NULL;
-                SCMutexUnlock(&lf_ctx->parent->threads->mutex);
-            }
         }
         SCMutexDestroy(&lf_ctx->fp_mutex);
-    }
-
-    if (lf_ctx->type == LOGFILE_TYPE_PLUGIN) {
-        lf_ctx->plugin.plugin->Deinit(lf_ctx->plugin.init_data);
     }
 
     if (lf_ctx->prefix != NULL) {

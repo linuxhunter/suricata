@@ -27,78 +27,149 @@
 #include "stream-tcp-reassemble.h"
 #include "action-globals.h"
 
+enum ExceptionPolicy g_eps_master_switch = EXCEPTION_POLICY_NOT_SET;
+/** true if exception policy was defined in config */
+static bool g_eps_have_exception_policy = false;
+
+static const char *ExceptionPolicyEnumToString(enum ExceptionPolicy policy)
+{
+    switch (policy) {
+        case EXCEPTION_POLICY_NOT_SET:
+            return "ignore";
+        case EXCEPTION_POLICY_REJECT:
+            return "reject";
+        case EXCEPTION_POLICY_BYPASS_FLOW:
+            return "bypass";
+        case EXCEPTION_POLICY_DROP_FLOW:
+            return "drop-flow";
+        case EXCEPTION_POLICY_DROP_PACKET:
+            return "drop-packet";
+        case EXCEPTION_POLICY_PASS_PACKET:
+            return "pass-packet";
+        case EXCEPTION_POLICY_PASS_FLOW:
+            return "pass-flow";
+    }
+    // TODO we shouldn't reach this, but if we do, better not to leave this as simply null...
+    return "not set";
+}
+
+void SetMasterExceptionPolicy(void)
+{
+    g_eps_master_switch = ExceptionPolicyParse("exception-policy", true);
+}
+
+static enum ExceptionPolicy GetMasterExceptionPolicy(const char *option)
+{
+    return g_eps_master_switch;
+}
+
 void ExceptionPolicyApply(Packet *p, enum ExceptionPolicy policy, enum PacketDropReason drop_reason)
 {
     SCLogDebug("start: pcap_cnt %" PRIu64 ", policy %u", p->pcap_cnt, policy);
-    if (EngineModeIsIPS()) {
-        switch (policy) {
-            case EXCEPTION_POLICY_IGNORE:
-                break;
-            case EXCEPTION_POLICY_REJECT:
-                SCLogDebug("EXCEPTION_POLICY_REJECT");
-                PacketDrop(p, ACTION_REJECT, drop_reason);
-                /* fall through */
-            case EXCEPTION_POLICY_DROP_FLOW:
-                SCLogDebug("EXCEPTION_POLICY_DROP_FLOW");
-                if (p->flow) {
-                    p->flow->flags |= FLOW_ACTION_DROP;
-                    FlowSetNoPayloadInspectionFlag(p->flow);
-                    FlowSetNoPacketInspectionFlag(p->flow);
-                    StreamTcpDisableAppLayer(p->flow);
-                }
-                /* fall through */
-            case EXCEPTION_POLICY_DROP_PACKET:
-                SCLogDebug("EXCEPTION_POLICY_DROP_PACKET");
-                DecodeSetNoPayloadInspectionFlag(p);
-                DecodeSetNoPacketInspectionFlag(p);
-                PacketDrop(p, ACTION_DROP, drop_reason);
-                break;
-            case EXCEPTION_POLICY_BYPASS_FLOW:
-                PacketBypassCallback(p);
-                /* fall through */
-            case EXCEPTION_POLICY_PASS_FLOW:
-                SCLogDebug("EXCEPTION_POLICY_PASS_FLOW");
-                if (p->flow) {
-                    p->flow->flags |= FLOW_ACTION_PASS;
-                    FlowSetNoPacketInspectionFlag(p->flow); // TODO util func
-                }
-                /* fall through */
-            case EXCEPTION_POLICY_PASS_PACKET:
-                SCLogDebug("EXCEPTION_POLICY_PASS_PACKET");
-                DecodeSetNoPayloadInspectionFlag(p);
-                DecodeSetNoPacketInspectionFlag(p);
-                break;
-        }
+    switch (policy) {
+        case EXCEPTION_POLICY_NOT_SET:
+            break;
+        case EXCEPTION_POLICY_REJECT:
+            SCLogDebug("EXCEPTION_POLICY_REJECT");
+            PacketDrop(p, ACTION_REJECT, drop_reason);
+            /* fall through */
+        case EXCEPTION_POLICY_DROP_FLOW:
+            SCLogDebug("EXCEPTION_POLICY_DROP_FLOW");
+            if (p->flow) {
+                p->flow->flags |= FLOW_ACTION_DROP;
+                FlowSetNoPayloadInspectionFlag(p->flow);
+                FlowSetNoPacketInspectionFlag(p->flow);
+                StreamTcpDisableAppLayer(p->flow);
+            }
+            /* fall through */
+        case EXCEPTION_POLICY_DROP_PACKET:
+            SCLogDebug("EXCEPTION_POLICY_DROP_PACKET");
+            DecodeSetNoPayloadInspectionFlag(p);
+            DecodeSetNoPacketInspectionFlag(p);
+            PacketDrop(p, ACTION_DROP, drop_reason);
+            break;
+        case EXCEPTION_POLICY_BYPASS_FLOW:
+            PacketBypassCallback(p);
+            /* fall through */
+        case EXCEPTION_POLICY_PASS_FLOW:
+            SCLogDebug("EXCEPTION_POLICY_PASS_FLOW");
+            if (p->flow) {
+                p->flow->flags |= FLOW_ACTION_PASS;
+                FlowSetNoPacketInspectionFlag(p->flow); // TODO util func
+            }
+            /* fall through */
+        case EXCEPTION_POLICY_PASS_PACKET:
+            SCLogDebug("EXCEPTION_POLICY_PASS_PACKET");
+            DecodeSetNoPayloadInspectionFlag(p);
+            DecodeSetNoPacketInspectionFlag(p);
+            break;
     }
     SCLogDebug("end");
 }
 
+static enum ExceptionPolicy SetIPSOption(
+        const char *option, const char *value_str, enum ExceptionPolicy p)
+{
+    if (!EngineModeIsIPS()) {
+        SCLogConfig("%s: %s not a valid config in IDS mode. Ignoring it.", option, value_str);
+        return EXCEPTION_POLICY_NOT_SET;
+    }
+    return p;
+}
+
+static enum ExceptionPolicy PickPacketAction(const char *option, enum ExceptionPolicy p)
+{
+    switch (p) {
+        case EXCEPTION_POLICY_DROP_FLOW:
+            SCLogWarning(
+                    "flow actions not supported for %s, defaulting to \"drop-packet\"", option);
+            return EXCEPTION_POLICY_DROP_PACKET;
+        case EXCEPTION_POLICY_PASS_FLOW:
+            SCLogWarning(
+                    "flow actions not supported for %s, defaulting to \"pass-packet\"", option);
+            return EXCEPTION_POLICY_PASS_PACKET;
+        case EXCEPTION_POLICY_BYPASS_FLOW:
+            SCLogWarning("flow actions not supported for %s, defaulting to \"ignore\"", option);
+            return EXCEPTION_POLICY_NOT_SET;
+        /* add all cases, to make sure new cases not handle will raise
+         * errors */
+        case EXCEPTION_POLICY_DROP_PACKET:
+            break;
+        case EXCEPTION_POLICY_PASS_PACKET:
+            break;
+        case EXCEPTION_POLICY_REJECT:
+            break;
+        case EXCEPTION_POLICY_NOT_SET:
+            break;
+    }
+    return p;
+}
+
 enum ExceptionPolicy ExceptionPolicyParse(const char *option, const bool support_flow)
 {
-    enum ExceptionPolicy policy = EXCEPTION_POLICY_IGNORE;
+    enum ExceptionPolicy policy = EXCEPTION_POLICY_NOT_SET;
     const char *value_str = NULL;
     if ((ConfGet(option, &value_str)) == 1 && value_str != NULL) {
         if (strcmp(value_str, "drop-flow") == 0) {
-            policy = EXCEPTION_POLICY_DROP_FLOW;
-            SCLogConfig("%s: %s", option, value_str);
+            policy = SetIPSOption(option, value_str, EXCEPTION_POLICY_DROP_FLOW);
         } else if (strcmp(value_str, "pass-flow") == 0) {
             policy = EXCEPTION_POLICY_PASS_FLOW;
-            SCLogConfig("%s: %s", option, value_str);
         } else if (strcmp(value_str, "bypass") == 0) {
             policy = EXCEPTION_POLICY_BYPASS_FLOW;
-            SCLogConfig("%s: %s", option, value_str);
         } else if (strcmp(value_str, "drop-packet") == 0) {
-            policy = EXCEPTION_POLICY_DROP_PACKET;
-            SCLogConfig("%s: %s", option, value_str);
+            policy = SetIPSOption(option, value_str, EXCEPTION_POLICY_DROP_PACKET);
         } else if (strcmp(value_str, "pass-packet") == 0) {
             policy = EXCEPTION_POLICY_PASS_PACKET;
-            SCLogConfig("%s: %s", option, value_str);
         } else if (strcmp(value_str, "reject") == 0) {
             policy = EXCEPTION_POLICY_REJECT;
-            SCLogConfig("%s: %s", option, value_str);
         } else if (strcmp(value_str, "ignore") == 0) { // TODO name?
-            policy = EXCEPTION_POLICY_IGNORE;
-            SCLogConfig("%s: %s", option, value_str);
+            policy = EXCEPTION_POLICY_NOT_SET;
+        } else if (strcmp(value_str, "auto") == 0) {
+            if (!EngineModeIsIPS()) {
+                policy = EXCEPTION_POLICY_NOT_SET;
+            } else {
+                policy = EXCEPTION_POLICY_DROP_FLOW;
+            }
         } else {
             FatalErrorOnInit(
                     "\"%s\" is not a valid exception policy value. Valid options are drop-flow, "
@@ -107,16 +178,45 @@ enum ExceptionPolicy ExceptionPolicyParse(const char *option, const bool support
         }
 
         if (!support_flow) {
-            if (policy == EXCEPTION_POLICY_DROP_FLOW || policy == EXCEPTION_POLICY_PASS_FLOW ||
-                    policy == EXCEPTION_POLICY_BYPASS_FLOW) {
-                SCLogWarning("flow actions not supported for %s, defaulting to \"ignore\"", option);
-                policy = EXCEPTION_POLICY_IGNORE;
-            }
+            policy = PickPacketAction(option, policy);
         }
 
+        if (strcmp(option, "exception-policy") == 0) {
+            g_eps_have_exception_policy = true;
+
+            if (strcmp(value_str, "auto") == 0) {
+                SCLogConfig("%s: %s (because of 'auto' setting in %s-mode)", option,
+                        ExceptionPolicyEnumToString(policy), EngineModeIsIPS() ? "IPS" : "IDS");
+            } else {
+                SCLogConfig("%s: %s", option, ExceptionPolicyEnumToString(policy));
+            }
+        } else {
+            SCLogConfig("%s: %s", option, ExceptionPolicyEnumToString(policy));
+        }
+
+    } else if (strcmp(option, "exception-policy") == 0) {
+        /* not enabled, we won't change the master exception policy,
+             for now */
+        if (!EngineModeIsIPS()) {
+            policy = EXCEPTION_POLICY_NOT_SET;
+        } else {
+            policy = EXCEPTION_POLICY_DROP_FLOW;
+        }
+        SCLogConfig("%s: %s (%s-mode)", option, ExceptionPolicyEnumToString(policy),
+                EngineModeIsIPS() ? "IPS" : "IDS");
+
     } else {
-        SCLogConfig("%s: ignore", option);
+        /* Exception Policy was not defined individually */
+        policy = GetMasterExceptionPolicy(option);
+        if (g_eps_have_exception_policy) {
+            SCLogConfig("%s: %s (defined via 'exception-policy' master switch)", option,
+                    ExceptionPolicyEnumToString(policy));
+        } else {
+            SCLogConfig("%s: %s (defined via 'built-in default' for %s-mode)", option,
+                    ExceptionPolicyEnumToString(policy), EngineModeIsIPS() ? "IPS" : "IDS");
+        }
     }
+
     return policy;
 }
 

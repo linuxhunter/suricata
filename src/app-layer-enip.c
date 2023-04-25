@@ -299,7 +299,7 @@ static void ENIPStateTransactionFree(void *state, uint64_t tx_id)
  * \retval 1 when the command is parsed, 0 otherwise
  */
 static AppLayerResult ENIPParse(Flow *f, void *state, AppLayerParserState *pstate,
-        StreamSlice stream_slice, void *local_data)
+        StreamSlice stream_slice, void *local_data, uint8_t direction)
 {
     SCEnter();
     ENIPState *enip = (ENIPState *) state;
@@ -326,6 +326,11 @@ static AppLayerResult ENIPParse(Flow *f, void *state, AppLayerParserState *pstat
         if (tx == NULL)
             SCReturnStruct(APP_LAYER_OK);
 
+        if (direction == STREAM_TOCLIENT)
+            tx->tx_data.detect_flags_ts |= APP_LAYER_TX_SKIP_INSPECT_FLAG;
+        else
+            tx->tx_data.detect_flags_tc |= APP_LAYER_TX_SKIP_INSPECT_FLAG;
+
         SCLogDebug("ENIPParse input len %d", input_len);
         DecodeENIPPDU(input, input_len, tx);
         uint32_t pkt_len = tx->header.length + sizeof(ENIPEncapHdr);
@@ -348,6 +353,18 @@ static AppLayerResult ENIPParse(Flow *f, void *state, AppLayerParserState *pstat
     }
 
     SCReturnStruct(APP_LAYER_OK);
+}
+
+static AppLayerResult ENIPParseRequest(Flow *f, void *state, AppLayerParserState *pstate,
+        StreamSlice stream_slice, void *local_data)
+{
+    return ENIPParse(f, state, pstate, stream_slice, local_data, STREAM_TOSERVER);
+}
+
+static AppLayerResult ENIPParseResponse(Flow *f, void *state, AppLayerParserState *pstate,
+        StreamSlice stream_slice, void *local_data)
+{
+    return ENIPParse(f, state, pstate, stream_slice, local_data, STREAM_TOCLIENT);
 }
 
 #define ENIP_LEN_REGISTER_SESSION 4 // protocol u16, options u16
@@ -445,6 +462,40 @@ static uint16_t ENIPProbingParser(Flow *f, uint8_t direction,
     return ALPROTO_ENIP;
 }
 
+static AppLayerGetTxIterTuple ENIPGetTxIterator(const uint8_t ipproto, const AppProto alproto,
+        void *alstate, uint64_t min_tx_id, uint64_t max_tx_id, AppLayerGetTxIterState *state)
+{
+    ENIPState *enip_state = (ENIPState *)alstate;
+    AppLayerGetTxIterTuple no_tuple = { NULL, 0, false };
+    if (enip_state) {
+        ENIPTransaction *tx_ptr;
+        if (state->un.ptr == NULL) {
+            tx_ptr = TAILQ_FIRST(&enip_state->tx_list);
+        } else {
+            tx_ptr = (ENIPTransaction *)state->un.ptr;
+        }
+        if (tx_ptr) {
+            while (tx_ptr->tx_num < min_tx_id + 1) {
+                tx_ptr = TAILQ_NEXT(tx_ptr, next);
+                if (!tx_ptr) {
+                    return no_tuple;
+                }
+            }
+            if (tx_ptr->tx_num >= max_tx_id + 1) {
+                return no_tuple;
+            }
+            state->un.ptr = TAILQ_NEXT(tx_ptr, next);
+            AppLayerGetTxIterTuple tuple = {
+                .tx_ptr = tx_ptr,
+                .tx_id = tx_ptr->tx_num - 1,
+                .has_next = (state->un.ptr != NULL),
+            };
+            return tuple;
+        }
+    }
+    return no_tuple;
+}
+
 /**
  * \brief Function to register the ENIP protocol parsers and other functions
  */
@@ -491,15 +542,14 @@ void RegisterENIPUDPParsers(void)
 
     if (AppLayerParserConfParserEnabled("udp", proto_name))
     {
-        AppLayerParserRegisterParser(IPPROTO_UDP, ALPROTO_ENIP,
-                STREAM_TOSERVER, ENIPParse);
-        AppLayerParserRegisterParser(IPPROTO_UDP, ALPROTO_ENIP,
-                STREAM_TOCLIENT, ENIPParse);
+        AppLayerParserRegisterParser(IPPROTO_UDP, ALPROTO_ENIP, STREAM_TOSERVER, ENIPParseRequest);
+        AppLayerParserRegisterParser(IPPROTO_UDP, ALPROTO_ENIP, STREAM_TOCLIENT, ENIPParseResponse);
 
         AppLayerParserRegisterStateFuncs(IPPROTO_UDP, ALPROTO_ENIP,
                 ENIPStateAlloc, ENIPStateFree);
 
         AppLayerParserRegisterGetTx(IPPROTO_UDP, ALPROTO_ENIP, ENIPGetTx);
+        AppLayerParserRegisterGetTxIterator(IPPROTO_UDP, ALPROTO_ENIP, ENIPGetTxIterator);
         AppLayerParserRegisterTxDataFunc(IPPROTO_UDP, ALPROTO_ENIP, ENIPGetTxData);
         AppLayerParserRegisterStateDataFunc(IPPROTO_UDP, ALPROTO_ENIP, ENIPGetStateData);
         AppLayerParserRegisterGetTxCnt(IPPROTO_UDP, ALPROTO_ENIP, ENIPGetTxCnt);
@@ -566,14 +616,13 @@ void RegisterENIPTCPParsers(void)
 
     if (AppLayerParserConfParserEnabled("tcp", proto_name))
     {
-        AppLayerParserRegisterParser(IPPROTO_TCP, ALPROTO_ENIP,
-                STREAM_TOSERVER, ENIPParse);
-        AppLayerParserRegisterParser(IPPROTO_TCP, ALPROTO_ENIP,
-                STREAM_TOCLIENT, ENIPParse);
+        AppLayerParserRegisterParser(IPPROTO_TCP, ALPROTO_ENIP, STREAM_TOSERVER, ENIPParseRequest);
+        AppLayerParserRegisterParser(IPPROTO_TCP, ALPROTO_ENIP, STREAM_TOCLIENT, ENIPParseResponse);
         AppLayerParserRegisterStateFuncs(IPPROTO_TCP, ALPROTO_ENIP,
                 ENIPStateAlloc, ENIPStateFree);
 
         AppLayerParserRegisterGetTx(IPPROTO_TCP, ALPROTO_ENIP, ENIPGetTx);
+        AppLayerParserRegisterGetTxIterator(IPPROTO_TCP, ALPROTO_ENIP, ENIPGetTxIterator);
         AppLayerParserRegisterTxDataFunc(IPPROTO_TCP, ALPROTO_ENIP, ENIPGetTxData);
         AppLayerParserRegisterStateDataFunc(IPPROTO_TCP, ALPROTO_ENIP, ENIPGetStateData);
         AppLayerParserRegisterGetTxCnt(IPPROTO_TCP, ALPROTO_ENIP, ENIPGetTxCnt);

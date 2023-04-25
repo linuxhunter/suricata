@@ -58,9 +58,7 @@ fn parse_opcode(opcode: &str) -> Result<DetectDnsOpcode, ()> {
 /// 1 will be returned on match, otherwise 0 will be returned.
 #[no_mangle]
 pub extern "C" fn rs_dns_opcode_match(
-    tx: &mut DNSTransaction,
-    detect: &mut DetectDnsOpcode,
-    flags: u8,
+    tx: &mut DNSTransaction, detect: &mut DetectDnsOpcode, flags: u8,
 ) -> u8 {
     let header_flags = if flags & Direction::ToServer as u8 != 0 {
         if let Some(request) = &tx.request {
@@ -158,48 +156,44 @@ mod test {
 
     #[test]
     fn test_match_opcode() {
-        assert_eq!(
+        assert!(
             match_opcode(
                 &DetectDnsOpcode {
                     negate: false,
                     opcode: 0,
                 },
                 0b0000_0000_0000_0000,
-            ),
-            true
+            )
         );
 
-        assert_eq!(
-            match_opcode(
+        assert!(
+            !match_opcode(
                 &DetectDnsOpcode {
                     negate: true,
                     opcode: 0,
                 },
                 0b0000_0000_0000_0000,
-            ),
-            false
+            )
         );
 
-        assert_eq!(
+        assert!(
             match_opcode(
                 &DetectDnsOpcode {
                     negate: false,
                     opcode: 4,
                 },
                 0b0010_0000_0000_0000,
-            ),
-            true
+            )
         );
 
-        assert_eq!(
-            match_opcode(
+        assert!(
+            !match_opcode(
                 &DetectDnsOpcode {
                     negate: true,
                     opcode: 4,
                 },
                 0b0010_0000_0000_0000,
-            ),
-            false
+            )
         );
     }
 }

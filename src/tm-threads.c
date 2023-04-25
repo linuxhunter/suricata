@@ -43,6 +43,7 @@
 #include "util-profiling.h"
 #include "util-signal.h"
 #include "queue.h"
+#include "util-validate.h"
 
 #ifdef PROFILE_LOCKING
 thread_local uint64_t mutex_lock_contention;
@@ -117,6 +118,7 @@ TmEcode TmThreadsSlotVarRun(ThreadVars *tv, Packet *p, TmSlot *slot)
         PACKET_PROFILING_TMM_START(p, s->tm_id);
         TmEcode r = s->SlotFunc(tv, p, SC_ATOMIC_GET(s->slot_data));
         PACKET_PROFILING_TMM_END(p, s->tm_id);
+        DEBUG_VALIDATE_BUG_ON(p->flow != NULL);
 
         /* handle error */
         if (unlikely(r == TM_ECODE_FAILED)) {
@@ -130,6 +132,7 @@ TmEcode TmThreadsSlotVarRun(ThreadVars *tv, Packet *p, TmSlot *slot)
             Packet *extra_p = PacketDequeueNoLock(&tv->decode_pq);
             if (unlikely(extra_p == NULL))
                 continue;
+            DEBUG_VALIDATE_BUG_ON(extra_p->flow != NULL);
 
             /* see if we need to process the packet */
             if (s->slot_next != NULL) {
@@ -175,6 +178,7 @@ static int TmThreadTimeoutLoop(ThreadVars *tv, TmSlot *s)
                 Packet *p = PacketDequeue(tv->stream_pq);
                 SCMutexUnlock(&tv->stream_pq->mutex_q);
                 if (likely(p)) {
+                    DEBUG_VALIDATE_BUG_ON(p->flow != NULL);
                     r = TmThreadsSlotProcessPkt(tv, fw_slot, p);
                     if (r == TM_ECODE_FAILED) {
                         break;
@@ -1885,7 +1889,7 @@ again:
 /**
  * \brief Unpauses all threads present in tv_root
  */
-void TmThreadContinueThreads()
+void TmThreadContinueThreads(void)
 {
     SCMutexLock(&tv_root_lock);
     for (int i = 0; i < TVT_MAX; i++) {
@@ -2052,7 +2056,7 @@ typedef struct Thread_ {
     int type;
     int in_use;         /**< bool to indicate this is in use */
 
-    struct timeval pktts;   /**< current packet time of this thread
+    SCTime_t pktts;         /**< current packet time of this thread
                              *   (offline mode) */
     uint32_t sys_sec_stamp; /**< timestamp in seconds of the real system
                              *   time when the pktts was last updated. */
@@ -2167,7 +2171,7 @@ end:
     SCMutexUnlock(&thread_store_lock);
 }
 
-void TmThreadsSetThreadTimestamp(const int id, const struct timeval *ts)
+void TmThreadsSetThreadTimestamp(const int id, const SCTime_t ts)
 {
     SCMutexLock(&thread_store_lock);
     if (unlikely(id <= 0 || id > (int)thread_store.threads_size)) {
@@ -2177,7 +2181,7 @@ void TmThreadsSetThreadTimestamp(const int id, const struct timeval *ts)
 
     int idx = id - 1;
     Thread *t = &thread_store.threads[idx];
-    t->pktts = *ts;
+    t->pktts = ts;
     struct timeval systs;
     gettimeofday(&systs, NULL);
     t->sys_sec_stamp = (uint32_t)systs.tv_sec;
@@ -2201,7 +2205,7 @@ bool TmThreadsTimeSubsysIsReady(void)
     return ready;
 }
 
-void TmThreadsInitThreadsTimestamp(const struct timeval *ts)
+void TmThreadsInitThreadsTimestamp(const SCTime_t ts)
 {
     struct timeval systs;
     gettimeofday(&systs, NULL);
@@ -2210,7 +2214,7 @@ void TmThreadsInitThreadsTimestamp(const struct timeval *ts)
         Thread *t = &thread_store.threads[s];
         if (!t->in_use)
             break;
-        t->pktts = *ts;
+        t->pktts = ts;
         t->sys_sec_stamp = (uint32_t)systs.tv_sec;
     }
     SCMutexUnlock(&thread_store_lock);
@@ -2218,10 +2222,9 @@ void TmThreadsInitThreadsTimestamp(const struct timeval *ts)
 
 void TmThreadsGetMinimalTimestamp(struct timeval *ts)
 {
-    struct timeval local, nullts;
-    memset(&local, 0, sizeof(local));
-    memset(&nullts, 0, sizeof(nullts));
-    int set = 0;
+    struct timeval local = { 0 };
+    static struct timeval nullts;
+    bool set = false;
     size_t s;
     struct timeval systs;
     gettimeofday(&systs, NULL);
@@ -2231,17 +2234,19 @@ void TmThreadsGetMinimalTimestamp(struct timeval *ts)
         Thread *t = &thread_store.threads[s];
         if (t->in_use == 0)
             break;
-        if (!(timercmp(&t->pktts, &nullts, ==))) {
+        struct timeval pkttv = { .tv_sec = SCTIME_SECS(t->pktts),
+            .tv_usec = SCTIME_USECS(t->pktts) };
+        if (!(timercmp(&pkttv, &nullts, ==))) {
             /* ignore sleeping threads */
             if (t->sys_sec_stamp + 1 < (uint32_t)systs.tv_sec)
                 continue;
 
             if (!set) {
-                local = t->pktts;
-                set = 1;
+                SCTIME_TO_TIMEVAL(&local, t->pktts);
+                set = true;
             } else {
-                if (timercmp(&t->pktts, &local, <)) {
-                    local = t->pktts;
+                if (SCTIME_CMP_LT(t->pktts, SCTIME_FROM_TIMEVAL(&local))) {
+                    SCTIME_TO_TIMEVAL(&local, t->pktts);
                 }
             }
         }
@@ -2251,7 +2256,7 @@ void TmThreadsGetMinimalTimestamp(struct timeval *ts)
     SCLogDebug("ts->tv_sec %"PRIuMAX, (uintmax_t)ts->tv_sec);
 }
 
-uint16_t TmThreadsGetWorkerThreadMax()
+uint16_t TmThreadsGetWorkerThreadMax(void)
 {
     uint16_t ncpus = UtilCpuGetNumProcessorsOnline();
     int thread_max = TmThreadGetNbThreads(WORKER_CPU_SET);
@@ -2265,23 +2270,6 @@ uint16_t TmThreadsGetWorkerThreadMax()
         thread_max = 1024;
     }
     return (uint16_t)thread_max;
-}
-
-static inline void ThreadBreakLoop(ThreadVars *tv)
-{
-    if ((tv->tmm_flags & TM_FLAG_RECEIVE_TM) == 0) {
-        return;
-    }
-    /* find the correct slot */
-    TmSlot *s = tv->tm_slots;
-    TmModule *tm = TmModuleGetById(s->tm_id);
-    if (tm->flags & TM_FLAG_RECEIVE_TM) {
-        /* if the method supports it, BreakLoop. Otherwise we rely on
-         * the capture method's recv timeout */
-        if (tm->PktAcqLoop && tm->PktAcqBreakLoop) {
-            tm->PktAcqBreakLoop(tv, SC_ATOMIC_GET(s->slot_data));
-        }
-    }
 }
 
 /** \brief inject a flow into a threads flow queue
@@ -2303,6 +2291,6 @@ void TmThreadsInjectFlowById(Flow *f, const int id)
     if (tv->inq != NULL) {
         SCCondSignal(&tv->inq->pq->cond_q);
     } else if (tv->break_loop) {
-        ThreadBreakLoop(tv);
+        TmThreadsCaptureBreakLoop(tv);
     }
 }

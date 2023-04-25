@@ -1,4 +1,4 @@
-    AC_INIT([suricata],[7.0.0-rc1-dev])
+    AC_INIT([suricata],[7.0.0-rc2-dev])
     m4_ifndef([AM_SILENT_RULES], [m4_define([AM_SILENT_RULES],[])])AM_SILENT_RULES([yes])
     AC_CONFIG_HEADERS([src/autoconf.h])
     AC_CONFIG_SRCDIR([src/suricata.c])
@@ -1369,6 +1369,10 @@
         # Are all required libs installed, yes=HAVE_AF_XDP
         AS_IF([test "x$enable_af_xdp" = "xyes"],
             AC_DEFINE([HAVE_AF_XDP],[1],[AF_XDP support is available]))
+
+        # bpf_get_link_xpd_id has been removed in the most recent
+        # versions of libbpf.
+        AC_CHECK_FUNCS([bpf_xdp_query_id])
     ])
 
   # DPDK support
@@ -2447,6 +2451,9 @@ return 0;
         fi
     fi
 
+# get MAJOR_MINOR version for embedding in configuration file.
+    MAJOR_MINOR=`expr "${PACKAGE_VERSION}" : "\([[0-9]]\+\.[[0-9]]\+\).*"`
+
 if test "${enable_ebpf}" = "yes" || test "${enable_unittests}" = "yes"; then
   AC_DEFINE([CAPTURE_OFFLOAD_MANAGER], [1],[Building flow bypass manager code])
 fi
@@ -2546,6 +2553,7 @@ AC_SUBST(CONFIGURE_SYSCONDIR)
 AC_SUBST(CONFIGURE_LOCALSTATEDIR)
 AC_SUBST(CONFIGURE_DATAROOTDIR)
 AC_SUBST(PACKAGE_VERSION)
+AC_SUBST(MAJOR_MINOR)
 AC_SUBST(RUST_FEATURES)
 AC_SUBST(RUST_SURICATA_LIBDIR)
 AC_SUBST(RUST_SURICATA_LIBNAME)
@@ -2553,7 +2561,7 @@ AC_SUBST(enable_non_bundled_htp)
 
 AM_CONDITIONAL([BUILD_SHARED_LIBRARY], [test "x$enable_shared" = "xyes"] && [test "x$can_build_shared_library" = "xyes"])
 
-AC_CONFIG_FILES(Makefile src/Makefile rust/Makefile rust/Cargo.toml rust/derive/Cargo.toml rust/.cargo/config)
+AC_CONFIG_FILES(Makefile src/Makefile rust/Makefile rust/Cargo.lock rust/Cargo.toml rust/derive/Cargo.toml rust/.cargo/config)
 AC_CONFIG_FILES(qa/Makefile qa/coccinelle/Makefile)
 AC_CONFIG_FILES(rules/Makefile doc/Makefile doc/userguide/Makefile)
 AC_CONFIG_FILES(contrib/Makefile contrib/file_processor/Makefile contrib/file_processor/Action/Makefile contrib/file_processor/Processor/Makefile)

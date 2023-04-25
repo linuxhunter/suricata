@@ -379,9 +379,6 @@ static TmEcode WriteLinuxTunables(AFXDPThreadVars *ptv)
 
 static TmEcode ConfigureBusyPolling(AFXDPThreadVars *ptv)
 {
-    const int fd = xsk_socket__fd(ptv->xsk.xsk);
-    int sock_opt = 1;
-
     if (!ptv->xsk.enable_busy_poll) {
         SCReturnInt(TM_ECODE_OK);
     }
@@ -394,6 +391,10 @@ static TmEcode ConfigureBusyPolling(AFXDPThreadVars *ptv)
                      " upgrade kernel version to use 'enable-busy-poll' option.");
         SCReturnInt(TM_ECODE_FAILED);
     }
+
+#if defined SO_PREFER_BUSY_POLL && defined SO_BUSY_POLL && defined SO_BUSY_POLL_BUDGET
+    const int fd = xsk_socket__fd(ptv->xsk.xsk);
+    int sock_opt = 1;
 
     if (WriteLinuxTunables(ptv) != TM_ECODE_OK) {
         SCReturnInt(TM_ECODE_FAILED);
@@ -414,6 +415,11 @@ static TmEcode ConfigureBusyPolling(AFXDPThreadVars *ptv)
     }
 
     SCReturnInt(TM_ECODE_OK);
+#else
+    SCLogWarning(
+            "Kernel does not support busy poll, upgrade kernel or disable \"enable-busy-poll\".");
+    SCReturnInt(TM_ECODE_FAILED);
+#endif
 }
 
 static void AFXDPSwitchState(AFXDPThreadVars *ptv, int state)
@@ -487,10 +493,17 @@ static TmEcode AFXDPSocketCreation(AFXDPThreadVars *ptv)
     }
 
     /* Has the eBPF program successfully bound? */
+#ifdef HAVE_BPF_XDP_QUERY_ID
+    if (bpf_xdp_query_id(ptv->ifindex, ptv->xsk.cfg.xdp_flags, &ptv->prog_id)) {
+        SCLogError("Failed to attach eBPF program to interface: %s", ptv->livedev->dev);
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+#else
     if (bpf_get_link_xdp_id(ptv->ifindex, &ptv->prog_id, ptv->xsk.cfg.xdp_flags)) {
         SCLogError("Failed to attach eBPF program to interface: %s", ptv->livedev->dev);
         SCReturnInt(TM_ECODE_FAILED);
     }
+#endif
 
     SCReturnInt(TM_ECODE_OK);
 }
@@ -775,7 +788,7 @@ static TmEcode ReceiveAFXDPLoop(ThreadVars *tv, void *data, void *slot)
             p->ReleasePacket = AFXDPReleasePacket;
             p->flags |= PKT_IGNORE_CHECKSUM;
 
-            p->ts = ts;
+            p->ts = SCTIME_FROM_TIMEVAL(&ts);
 
             uint64_t addr = xsk_ring_cons__rx_desc(&ptv->xsk.rx, idx_rx)->addr;
             uint32_t len = xsk_ring_cons__rx_desc(&ptv->xsk.rx, idx_rx++)->len;

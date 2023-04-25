@@ -231,11 +231,12 @@ static inline void PfringProcessPacket(void *user, struct pfring_pkthdr *h, Pack
 
     /* PF_RING may fail to set timestamp */
     if (h->ts.tv_sec == 0) {
-        gettimeofday((struct timeval *)&h->ts, NULL);
+        struct timeval tmp_ts;
+        gettimeofday(&tmp_ts, NULL);
+        h->ts = tmp_ts;
     }
 
-    p->ts.tv_sec = h->ts.tv_sec;
-    p->ts.tv_usec = h->ts.tv_usec;
+    p->ts = SCTIME_FROM_TIMEVAL(&h->ts);
 
     /* PF_RING all packets are marked as a link type of ethernet
      * so that is what we do here. */
@@ -348,7 +349,7 @@ TmEcode ReceivePfringLoop(ThreadVars *tv, void *data, void *slot)
     Packet *p = NULL;
     struct pfring_pkthdr hdr;
     TmSlot *s = (TmSlot *)slot;
-    time_t last_dump = 0;
+    SCTime_t last_dump = SCTIME_INITIALIZER;
     u_int buffer_size;
     u_char *pkt_buffer;
 
@@ -423,9 +424,9 @@ TmEcode ReceivePfringLoop(ThreadVars *tv, void *data, void *slot)
             }
 
             /* Trigger one dump of stats every second */
-            if (p->ts.tv_sec != last_dump) {
+            if (SCTIME_CMP_NEQ(p->ts, last_dump)) {
                 PfringDumpCounters(ptv);
-                last_dump = p->ts.tv_sec;
+                last_dump = p->ts;
             }
         } else if (unlikely(r == 0)) {
             if (suricata_ctl_flags & SURICATA_STOP) {

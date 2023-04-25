@@ -104,7 +104,7 @@ static int DetectUrilenSetup (DetectEngineCtx *de_ctx, Signature *s, const char 
     DetectUrilenData *urilend = NULL;
     SigMatch *sm = NULL;
 
-    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP1) != 0)
+    if (DetectSignatureSetAppProto(s, ALPROTO_HTTP) != 0)
         return -1;
 
     urilend = DetectUrilenParse(urilenstr);
@@ -202,6 +202,7 @@ void DetectUrilenApplyToContent(Signature *s, int list)
 
         if (cd->depth == 0 || cd->depth > high) {
             cd->depth = high;
+            cd->flags |= DETECT_CONTENT_DEPTH;
             SCLogDebug("updated %u, content %u to have depth %u "
                     "because of urilen.", s->id, cd->id, cd->depth);
         }

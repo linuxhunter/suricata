@@ -37,6 +37,7 @@ void InspectionBufferApplyTransforms(InspectionBuffer *buffer,
         const DetectEngineTransforms *transforms);
 void InspectionBufferClean(DetectEngineThreadCtx *det_ctx);
 InspectionBuffer *InspectionBufferGet(DetectEngineThreadCtx *det_ctx, const int list_id);
+void InspectionBufferSetupMultiEmpty(InspectionBuffer *buffer);
 void InspectionBufferSetupMulti(InspectionBuffer *buffer, const DetectEngineTransforms *transforms,
         const uint8_t *data, const uint32_t data_len);
 InspectionBuffer *InspectionBufferMultipleForListGet(
@@ -183,8 +184,15 @@ void DetectEngineSetParseMetadata(void);
 void DetectEngineUnsetParseMetadata(void);
 int DetectEngineMustParseMetadata(void);
 
-int WARN_UNUSED DetectBufferSetActiveList(Signature *s, const int list);
+SigMatch *DetectBufferGetFirstSigMatch(const Signature *s, const uint32_t buf_id);
+SigMatch *DetectBufferGetLastSigMatch(const Signature *s, const uint32_t buf_id);
+bool DetectBufferIsPresent(const Signature *s, const uint32_t buf_id);
+
+int WARN_UNUSED DetectBufferSetActiveList(DetectEngineCtx *de_ctx, Signature *s, const int list);
 int DetectBufferGetActiveList(DetectEngineCtx *de_ctx, Signature *s);
+SigMatch *DetectBufferGetFirstSigMatch(const Signature *s, const uint32_t buf_id);
+SigMatch *DetectBufferGetLastSigMatch(const Signature *s, const uint32_t buf_id);
+bool DetectBufferIsPresent(const Signature *s, const uint32_t buf_id);
 
 DetectEngineThreadCtx *DetectEngineThreadCtxInitForReload(
         ThreadVars *tv, DetectEngineCtx *new_de_ctx, int mt);

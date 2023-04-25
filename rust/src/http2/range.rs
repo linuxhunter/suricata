@@ -20,6 +20,7 @@ use crate::core::{
     Direction, Flow, HttpRangeContainerBlock, StreamingBufferConfig, SuricataFileContext, SC,
 };
 use crate::http2::http2::HTTP2Transaction;
+use crate::http2::http2::SURICATA_HTTP2_FILE_CONFIG;
 
 use nom7::branch::alt;
 use nom7::bytes::streaming::{take_till, take_while};
@@ -130,7 +131,7 @@ pub fn http2_range_open(
         // whole file in one range
         return;
     }
-    let (_, flags) = tx.files.get(dir);
+    let flags = if dir == Direction::ToServer { tx.ft_ts.file_flags } else { tx.ft_tc.file_flags };
     if let Ok((key, index)) = http2_range_key_get(tx) {
         let name = &key[index..];
         tx.file_range = unsafe {
@@ -150,9 +151,9 @@ pub fn http2_range_open(
     }
 }
 
-pub fn http2_range_append(fr: *mut HttpRangeContainerBlock, data: &[u8]) {
+pub fn http2_range_append(cfg: &'static SuricataFileContext, fr: *mut HttpRangeContainerBlock, data: &[u8]) {
     unsafe {
-        HttpRangeAppendData(fr, data.as_ptr(), data.len() as u32);
+        HttpRangeAppendData(cfg.files_sbcfg, fr, data.as_ptr(), data.len() as u32);
     }
 }
 
@@ -160,16 +161,25 @@ pub fn http2_range_close(
     tx: &mut HTTP2Transaction, dir: Direction, data: &[u8],
 ) {
     let added = if let Some(c) = unsafe { SC } {
-        let (files, flags) = tx.files.get(dir);
-        let added = (c.HTPFileCloseHandleRange)(
-            files,
-            flags,
-            tx.file_range,
-            data.as_ptr(),
-            data.len() as u32,
-        );
-        (c.HttpRangeFreeBlock)(tx.file_range);
-        added
+        if let Some(sfcm) = unsafe { SURICATA_HTTP2_FILE_CONFIG } {
+            let (files, flags) = if dir == Direction::ToServer {
+                (&mut tx.ft_ts.file, tx.ft_ts.file_flags)
+            } else {
+                (&mut tx.ft_tc.file, tx.ft_tc.file_flags)
+            };
+            let added = (c.HTPFileCloseHandleRange)(
+                    sfcm.files_sbcfg,
+                    files,
+                    flags,
+                    tx.file_range,
+                    data.as_ptr(),
+                    data.len() as u32,
+                    );
+            (c.HttpRangeFreeBlock)(tx.file_range);
+            added
+        } else {
+            false
+        }
     } else {
         false
     };
@@ -187,7 +197,7 @@ extern "C" {
         data: *const c_uchar, data_len: u32,
     ) -> *mut HttpRangeContainerBlock;
     pub fn HttpRangeAppendData(
-        c: *mut HttpRangeContainerBlock, data: *const c_uchar, data_len: u32,
+        cfg: *const StreamingBufferConfig, c: *mut HttpRangeContainerBlock, data: *const c_uchar, data_len: u32,
     ) -> std::os::raw::c_int;
 }
 

@@ -150,7 +150,6 @@ int DetectByteMathDoMatch(DetectEngineThreadCtx *det_ctx, const SigMatchData *sm
     BUG_ON(extbytes > len);
 
     ptr += extbytes;
-    det_ctx->buffer_offset = ptr - payload;
 
     switch (data->oper) {
         case OperatorNone:
@@ -162,18 +161,28 @@ int DetectByteMathDoMatch(DetectEngineThreadCtx *det_ctx, const SigMatchData *sm
             val -= rvalue;
             break;
         case Division:
+            if (rvalue == 0) {
+                SCLogDebug("avoiding division by zero");
+                return 0;
+            }
             val /= rvalue;
             break;
         case Multiplication:
             val *= rvalue;
             break;
         case LeftShift:
-            val <<= rvalue;
+            if (rvalue < 64) {
+                val <<= rvalue;
+            } else {
+                val = 0;
+            }
             break;
         case RightShift:
             val >>= rvalue;
             break;
     }
+
+    det_ctx->buffer_offset = ptr - payload;
 
     if (data->flags & DETECT_BYTEMATH_FLAG_BITMASK) {
         val &= data->bitmask_val;
@@ -330,9 +339,7 @@ static int DetectByteMathSetup(DetectEngineCtx *de_ctx, Signature *s, const char
     if (rvalue != NULL) {
         DetectByteIndexType index;
         if (!DetectByteRetrieveSMVar(rvalue, s, &index)) {
-            SCLogError("unknown byte_ keyword var "
-                       "seen in byte_math - %s\n",
-                    rvalue);
+            SCLogError("unknown byte_ keyword var seen in byte_math - %s", rvalue);
             goto error;
         }
         data->rvalue = index;
@@ -855,7 +862,7 @@ static int DetectByteMathPacket02(void)
 
     /*
      * byte_extract: Extract 1 byte from offset 0 --> 0x38
-     * byte_math: Extract 1 byte from offset 1 (0x38)
+     * byte_math: Extract 1 byte from offset -1 (0x38)
      *            Add 0x38 + 0x38 = 112 (0x70)
      * byte_test: Compare 2 bytes at offset 13 bytes from last
      *            match and compare with 0x70
@@ -941,9 +948,9 @@ static int DetectByteMathContext01(void)
 
     FAIL_IF(de_ctx->sig_list == NULL);
 
-    FAIL_IF(s->sm_lists_tail[DETECT_SM_LIST_PMATCH] == NULL);
+    FAIL_IF(s->init_data->smlists_tail[DETECT_SM_LIST_PMATCH] == NULL);
 
-    sm = s->sm_lists[DETECT_SM_LIST_PMATCH];
+    sm = s->init_data->smlists[DETECT_SM_LIST_PMATCH];
     FAIL_IF(sm->type != DETECT_CONTENT);
     cd = (DetectContentData *)sm->ctx;
     FAIL_IF(cd->flags & DETECT_CONTENT_WITHIN);
@@ -990,7 +997,7 @@ static void DetectByteMathRegisterTests(void)
     UtRegisterTest("DetectByteMathParseTest14", DetectByteMathParseTest14);
     UtRegisterTest("DetectByteMathParseTest15", DetectByteMathParseTest15);
     UtRegisterTest("DetectByteMathParseTest16", DetectByteMathParseTest16);
-    UtRegisterTest("DetectByteMathPacket01",    DetectByteMathPacket01);
+    UtRegisterTest("DetectByteMathPacket01", DetectByteMathPacket01);
     UtRegisterTest("DetectByteMathPacket02", DetectByteMathPacket02);
     UtRegisterTest("DetectByteMathContext01", DetectByteMathContext01);
 }

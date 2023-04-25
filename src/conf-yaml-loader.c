@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2023 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -48,7 +48,7 @@ static int mangle_errors = 0;
 
 static char *conf_dirname = NULL;
 
-static int ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel);
+static int ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel, int state);
 
 /* Configuration processing states. */
 enum conf_state {
@@ -113,8 +113,7 @@ ConfYamlSetConfDirname(const char *filename)
  *
  * \retval 0 on success, -1 on failure.
  */
-static int
-ConfYamlHandleInclude(ConfNode *parent, const char *filename)
+int ConfYamlHandleInclude(ConfNode *parent, const char *filename)
 {
     yaml_parser_t parser;
     char include_filename[PATH_MAX];
@@ -143,7 +142,7 @@ ConfYamlHandleInclude(ConfNode *parent, const char *filename)
 
     yaml_parser_set_input_file(&parser, file);
 
-    if (ConfYamlParse(&parser, parent, 0, 0) != 0) {
+    if (ConfYamlParse(&parser, parent, 0, 0, 0) != 0) {
         SCLogError("Failed to include configuration file %s", filename);
         goto done;
     }
@@ -167,17 +166,16 @@ done:
  *
  * \retval 0 on success, -1 on failure.
  */
-static int
-ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel)
+static int ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel, int state)
 {
     ConfNode *node = parent;
     yaml_event_t event;
     memset(&event, 0, sizeof(event));
     int done = 0;
-    int state = 0;
     int seq_idx = 0;
     int retval = 0;
     int was_empty = -1;
+    int include_count = 0;
 
     if (rlevel++ > RECURSION_LIMIT) {
         SCLogError("Recursion limit reached while parsing "
@@ -236,6 +234,15 @@ ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel)
             }
 
             if (inseq) {
+                if (state == CONF_INCLUDE) {
+                    if (value != NULL) {
+                        SCLogInfo("Including configuration file %s.", value);
+                        if (ConfYamlHandleInclude(parent, value) != 0) {
+                            goto fail;
+                        }
+                    }
+                    goto next;
+                }
                 char sequence_node_name[DEFAULT_NAME_LEN];
                 snprintf(sequence_node_name, DEFAULT_NAME_LEN, "%d", seq_idx++);
                 ConfNode *seq_node = NULL;
@@ -292,6 +299,12 @@ ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel)
 
                     if (strcmp(value, "include") == 0) {
                         state = CONF_INCLUDE;
+                        if (++include_count > 1) {
+                            SCLogWarning("Multipline \"include\" fields at the same level are "
+                                         "deprecated and will not work in Suricata 8, please move "
+                                         "to an array of include files: line: %zu",
+                                    parser->mark.line);
+                        }
                         goto next;
                     }
 
@@ -302,35 +315,45 @@ ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel)
                                 Mangle(parent->val);
                         }
                     }
-                    ConfNode *existing = ConfNodeLookupChild(parent, value);
-                    if (existing != NULL) {
-                        if (!existing->final) {
-                            SCLogInfo("Configuration node '%s' redefined.",
-                                existing->name);
-                            ConfNodePrune(existing);
+
+                    if (strchr(value, '.') != NULL) {
+                        node = ConfNodeGetNodeOrCreate(parent, value, 0);
+                        if (node == NULL) {
+                            /* Error message already logged. */
+                            goto fail;
                         }
-                        node = existing;
-                    }
-                    else {
-                        node = ConfNodeNew();
-                        node->name = SCStrdup(value);
-                        if (node->name && strchr(node->name, '_')) {
-                            if (!(parent->name &&
-                                   ((strcmp(parent->name, "address-groups") == 0) ||
-                                    (strcmp(parent->name, "port-groups") == 0)))) {
-                                Mangle(node->name);
-                                if (mangle_errors < MANGLE_ERRORS_MAX) {
-                                    SCLogWarning("%s is deprecated. Please use %s on line %" PRIuMAX
-                                                 ".",
-                                            value, node->name, (uintmax_t)parser->mark.line + 1);
-                                    mangle_errors++;
-                                    if (mangle_errors >= MANGLE_ERRORS_MAX)
-                                        SCLogWarning("not showing more "
-                                                     "parameter name warnings.");
+                    } else {
+                        ConfNode *existing = ConfNodeLookupChild(parent, value);
+                        if (existing != NULL) {
+                            if (!existing->final) {
+                                SCLogInfo("Configuration node '%s' redefined.", existing->name);
+                                ConfNodePrune(existing);
+                            }
+                            node = existing;
+                        } else {
+                            node = ConfNodeNew();
+                            node->name = SCStrdup(value);
+                            node->parent = parent;
+                            if (node->name && strchr(node->name, '_')) {
+                                if (!(parent->name &&
+                                            ((strcmp(parent->name, "address-groups") == 0) ||
+                                                    (strcmp(parent->name, "port-groups") == 0)))) {
+                                    Mangle(node->name);
+                                    if (mangle_errors < MANGLE_ERRORS_MAX) {
+                                        SCLogWarning(
+                                                "%s is deprecated. Please use %s on line %" PRIuMAX
+                                                ".",
+                                                value, node->name,
+                                                (uintmax_t)parser->mark.line + 1);
+                                        mangle_errors++;
+                                        if (mangle_errors >= MANGLE_ERRORS_MAX)
+                                            SCLogWarning("not showing more "
+                                                         "parameter name warnings.");
+                                    }
                                 }
                             }
+                            TAILQ_INSERT_TAIL(&parent->head, node, next);
                         }
-                        TAILQ_INSERT_TAIL(&parent->head, node, next);
                     }
                     state = CONF_VAL;
                 }
@@ -351,7 +374,8 @@ ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel)
         }
         else if (event.type == YAML_SEQUENCE_START_EVENT) {
             SCLogDebug("event.type=YAML_SEQUENCE_START_EVENT; state=%d", state);
-            if (ConfYamlParse(parser, node, 1, rlevel) != 0)
+            if (ConfYamlParse(parser, node, 1, rlevel, state == CONF_INCLUDE ? CONF_INCLUDE : 0) !=
+                    0)
                 goto fail;
             node->is_seq = 1;
             state = CONF_KEY;
@@ -362,6 +386,10 @@ ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel)
         }
         else if (event.type == YAML_MAPPING_START_EVENT) {
             SCLogDebug("event.type=YAML_MAPPING_START_EVENT; state=%d", state);
+            if (state == CONF_INCLUDE) {
+                SCLogError("Include fields cannot be a mapping: line %zu", parser->mark.line);
+                goto fail;
+            }
             if (inseq) {
                 char sequence_node_name[DEFAULT_NAME_LEN];
                 snprintf(sequence_node_name, DEFAULT_NAME_LEN, "%d", seq_idx++);
@@ -387,11 +415,11 @@ ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int rlevel)
                 }
                 seq_node->is_seq = 1;
                 TAILQ_INSERT_TAIL(&node->head, seq_node, next);
-                if (ConfYamlParse(parser, seq_node, 0, rlevel) != 0)
+                if (ConfYamlParse(parser, seq_node, 0, rlevel, 0) != 0)
                     goto fail;
             }
             else {
-                if (ConfYamlParse(parser, node, inseq, rlevel) != 0)
+                if (ConfYamlParse(parser, node, inseq, rlevel, 0) != 0)
                     goto fail;
             }
             state = CONF_KEY;
@@ -468,7 +496,7 @@ ConfYamlLoadFile(const char *filename)
     }
 
     yaml_parser_set_input_file(&parser, infile);
-    ret = ConfYamlParse(&parser, root, 0, 0);
+    ret = ConfYamlParse(&parser, root, 0, 0, 0);
     yaml_parser_delete(&parser);
     fclose(infile);
 
@@ -490,7 +518,7 @@ ConfYamlLoadString(const char *string, size_t len)
         exit(EXIT_FAILURE);
     }
     yaml_parser_set_input_string(&parser, (const unsigned char *)string, len);
-    ret = ConfYamlParse(&parser, root, 0, 0);
+    ret = ConfYamlParse(&parser, root, 0, 0, 0);
     yaml_parser_delete(&parser);
 
     return ret;
@@ -556,7 +584,7 @@ ConfYamlLoadFileWithPrefix(const char *filename, const char *prefix)
         }
     }
     yaml_parser_set_input_file(&parser, infile);
-    ret = ConfYamlParse(&parser, root, 0, 0);
+    ret = ConfYamlParse(&parser, root, 0, 0, 0);
     yaml_parser_delete(&parser);
     fclose(infile);
 
@@ -853,19 +881,22 @@ ConfYamlFileIncludeTest(void)
 static int
 ConfYamlOverrideTest(void)
 {
-    char config[] =
-        "%YAML 1.1\n"
-        "---\n"
-        "some-log-dir: /var/log\n"
-        "some-log-dir: /tmp\n"
-        "\n"
-        "parent:\n"
-        "  child0:\n"
-        "    key: value\n"
-        "parent:\n"
-        "  child1:\n"
-        "    key: value\n"
-        ;
+    char config[] = "%YAML 1.1\n"
+                    "---\n"
+                    "some-log-dir: /var/log\n"
+                    "some-log-dir: /tmp\n"
+                    "\n"
+                    "parent:\n"
+                    "  child0:\n"
+                    "    key: value\n"
+                    "parent:\n"
+                    "  child1:\n"
+                    "    key: value\n"
+                    "vars:\n"
+                    "  address-groups:\n"
+                    "    HOME_NET: \"[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]\"\n"
+                    "    EXTERNAL_NET: any\n"
+                    "vars.address-groups.HOME_NET: \"10.10.10.10/32\"\n";
     const char *value;
 
     ConfCreateContextBackup();
@@ -879,6 +910,24 @@ ConfYamlOverrideTest(void)
     FAIL_IF_NOT_NULL(ConfGetNode("parent.child0"));
     FAIL_IF_NOT(ConfGet("parent.child1.key", &value));
     FAIL_IF(strcmp(value, "value") != 0);
+
+    /* First check that vars.address-groups.EXTERNAL_NET has the
+     * expected parent of vars.address-groups and save this
+     * pointer. We want to make sure that the overrided value has the
+     * same parent later on. */
+    ConfNode *vars_address_groups = ConfGetNode("vars.address-groups");
+    FAIL_IF_NULL(vars_address_groups);
+    ConfNode *vars_address_groups_external_net = ConfGetNode("vars.address-groups.EXTERNAL_NET");
+    FAIL_IF_NULL(vars_address_groups_external_net);
+    FAIL_IF_NOT(vars_address_groups_external_net->parent == vars_address_groups);
+
+    /* Now check that HOME_NET has the overrided value. */
+    ConfNode *vars_address_groups_home_net = ConfGetNode("vars.address-groups.HOME_NET");
+    FAIL_IF_NULL(vars_address_groups_home_net);
+    FAIL_IF(strcmp(vars_address_groups_home_net->val, "10.10.10.10/32") != 0);
+
+    /* And check that it has the correct parent. */
+    FAIL_IF_NOT(vars_address_groups_home_net->parent == vars_address_groups);
 
     ConfDeInit();
     ConfRestoreContextBackup();

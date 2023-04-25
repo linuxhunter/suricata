@@ -18,12 +18,13 @@
 //! Parser registration functions and common interface
 
 use std;
-use crate::core::{self,DetectEngineState,Flow,AppLayerEventType,AppProto};
+use crate::core::{self,DetectEngineState,Flow,AppLayerEventType,AppProto,Direction};
 use crate::filecontainer::FileContainer;
 use crate::applayer;
 use std::os::raw::{c_void,c_char,c_int};
 use crate::core::SC;
 use std::ffi::CStr;
+use crate::core::StreamingBufferConfig;
 
 // Make the AppLayerEvent derive macro available to users importing
 // AppLayerEvent from this module.
@@ -147,6 +148,8 @@ impl Drop for AppLayerTxData {
 }
 
 impl AppLayerTxData {
+    /// Create new AppLayerTxData for a transaction that covers both
+    /// directions.
     pub fn new() -> Self {
         Self {
             config: AppLayerTxConfig::new(),
@@ -162,9 +165,33 @@ impl AppLayerTxData {
             events: std::ptr::null_mut(),
         }
     }
+
+    /// Create new AppLayerTxData for a transaction in a single
+    /// direction.
+    pub fn for_direction(direction: Direction) -> Self {
+        let (detect_flags_ts, detect_flags_tc) = match direction {
+            Direction::ToServer => (0, APP_LAYER_TX_SKIP_INSPECT_FLAG),
+            Direction::ToClient => (APP_LAYER_TX_SKIP_INSPECT_FLAG, 0),
+        };
+        Self {
+            config: AppLayerTxConfig::new(),
+            logged: LoggerFlags::new(),
+            files_opened: 0,
+            files_logged: 0,
+            files_stored: 0,
+            file_flags: 0,
+            file_tx: 0,
+            detect_flags_ts,
+            detect_flags_tc,
+            de_state: std::ptr::null_mut(),
+            events: std::ptr::null_mut(),
+        }
+    }
+
     pub fn init_files_opened(&mut self) {
         self.files_opened = 1;
     }
+
     pub fn incr_files_opened(&mut self) {
         self.files_opened += 1;
     }
@@ -383,6 +410,20 @@ macro_rules! cast_pointer {
     ($ptr:ident, $ty:ty) => ( &mut *($ptr as *mut $ty) );
 }
 
+/// helper for the GetTxFilesFn. Not meant to be embedded as the config
+/// pointer is passed around in the API.
+#[allow(non_snake_case)]
+#[repr(C)]
+pub struct AppLayerGetFileState {
+    pub fc: *mut FileContainer,
+    pub cfg: *const StreamingBufferConfig,
+}
+impl AppLayerGetFileState {
+    pub fn err() -> AppLayerGetFileState {
+        AppLayerGetFileState { fc: std::ptr::null_mut(), cfg: std::ptr::null() }
+    }
+}
+
 pub type ParseFn      = unsafe extern "C" fn (flow: *const Flow,
                                        state: *mut c_void,
                                        pstate: *mut c_void,
@@ -399,7 +440,7 @@ pub type GetEventInfoFn     = unsafe extern "C" fn (*const c_char, *mut c_int, *
 pub type GetEventInfoByIdFn = unsafe extern "C" fn (c_int, *mut *const c_char, *mut AppLayerEventType) -> i8;
 pub type LocalStorageNewFn  = extern "C" fn () -> *mut c_void;
 pub type LocalStorageFreeFn = extern "C" fn (*mut c_void);
-pub type GetTxFilesFn       = unsafe extern "C" fn (*mut c_void, u8) -> *mut FileContainer;
+pub type GetTxFilesFn       = unsafe extern "C" fn (*mut c_void, *mut c_void, u8) -> AppLayerGetFileState;
 pub type GetTxIteratorFn    = unsafe extern "C" fn (ipproto: u8, alproto: AppProto,
                                              state: *mut c_void,
                                              min_tx_id: u64,
@@ -458,6 +499,8 @@ pub const APP_LAYER_PARSER_TRUNC_TC : u16 = BIT_U16!(8);
 
 pub const APP_LAYER_PARSER_OPT_ACCEPT_GAPS: u32 = BIT_U32!(0);
 pub const APP_LAYER_PARSER_OPT_UNIDIR_TXS: u32 = BIT_U32!(1);
+
+pub const APP_LAYER_TX_SKIP_INSPECT_FLAG: u64 = BIT_U64!(62);
 
 pub type AppLayerGetTxIteratorFn = unsafe extern "C" fn (ipproto: u8,
                                                   alproto: AppProto,

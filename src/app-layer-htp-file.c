@@ -29,6 +29,8 @@
 #include "app-layer-htp-range.h"
 #include "util-validate.h"
 
+extern StreamingBufferConfig htp_sbcfg;
+
 /**
  *  \brief Open the file with "filename" and pass the first chunk
  *         of data if any.
@@ -50,27 +52,22 @@ int HTPFileOpen(HtpState *s, HtpTxUserData *tx, const uint8_t *filename, uint16_
     int retval = 0;
     uint16_t flags = 0;
     FileContainer *files = NULL;
-    const StreamingBufferConfig *sbcfg = NULL;
 
     SCLogDebug("data %p data_len %"PRIu32, data, data_len);
 
     if (direction & STREAM_TOCLIENT) {
         files = &tx->files_tc;
         flags = FileFlowFlagsToFlags(tx->tx_data.file_flags, STREAM_TOCLIENT);
-        sbcfg = &s->cfg->response.sbcfg;
 
         // we shall not open a new file if there is a current one
         DEBUG_VALIDATE_BUG_ON(tx->file_range != NULL);
     } else {
         files = &tx->files_ts;
         flags = FileFlowFlagsToFlags(tx->tx_data.file_flags, STREAM_TOSERVER);
-        sbcfg = &s->cfg->request.sbcfg;
     }
 
-    if (FileOpenFileWithId(files, sbcfg, s->file_track_id++,
-                filename, filename_len,
-                data, data_len, flags) != 0)
-    {
+    if (FileOpenFileWithId(files, &htp_sbcfg, s->file_track_id++, filename, filename_len, data,
+                data_len, flags) != 0) {
         retval = -1;
     }
 
@@ -159,8 +156,8 @@ int HTPFileOpenWithRange(HtpState *s, HtpTxUserData *txud, const uint8_t *filena
     FileContainer *files = &txud->files_tc;
 
     // we open a file for this specific range
-    if (FileOpenFileWithId(files, &s->cfg->response.sbcfg, s->file_track_id++, filename,
-                filename_len, data, data_len, flags) != 0) {
+    if (FileOpenFileWithId(files, &htp_sbcfg, s->file_track_id++, filename, filename_len, data,
+                data_len, flags) != 0) {
         SCReturnInt(-1);
     }
     txud->tx_data.files_opened++;
@@ -189,8 +186,8 @@ int HTPFileOpenWithRange(HtpState *s, HtpTxUserData *txud, const uint8_t *filena
         SCReturnInt(0);
     }
     DEBUG_VALIDATE_BUG_ON(htud->file_range);
-    htud->file_range = HttpRangeContainerOpenFile(keyurl, keylen, s->f, &crparsed,
-            &s->cfg->response.sbcfg, filename, filename_len, flags, data, data_len);
+    htud->file_range = HttpRangeContainerOpenFile(keyurl, keylen, s->f, &crparsed, &htp_sbcfg,
+            filename, filename_len, flags, data, data_len);
     SCFree(keyurl);
     if (htud->file_range == NULL) {
         SCReturnInt(-1);
@@ -201,6 +198,7 @@ int HTPFileOpenWithRange(HtpState *s, HtpTxUserData *txud, const uint8_t *filena
 /**
  *  \brief Store a chunk of data in the flow
  *
+ *  \param s HtpState
  *  \param tx HtpTxUserData
  *  \param data data chunk (if any)
  *  \param data_len length of the data portion
@@ -210,7 +208,8 @@ int HTPFileOpenWithRange(HtpState *s, HtpTxUserData *txud, const uint8_t *filena
  *  \retval -1 error
  *  \retval -2 file doesn't need storing
  */
-int HTPFileStoreChunk(HtpTxUserData *tx, const uint8_t *data, uint32_t data_len, uint8_t direction)
+int HTPFileStoreChunk(
+        HtpState *s, HtpTxUserData *tx, const uint8_t *data, uint32_t data_len, uint8_t direction)
 {
     SCEnter();
 
@@ -232,12 +231,12 @@ int HTPFileStoreChunk(HtpTxUserData *tx, const uint8_t *data, uint32_t data_len,
     }
 
     if (tx->file_range != NULL) {
-        if (HttpRangeAppendData(tx->file_range, data, data_len) < 0) {
+        if (HttpRangeAppendData(&htp_sbcfg, tx->file_range, data, data_len) < 0) {
             SCLogDebug("Failed to append data");
         }
     }
 
-    result = FileAppendData(files, data, data_len);
+    result = FileAppendData(files, &htp_sbcfg, data, data_len);
     if (result == -1) {
         SCLogDebug("appending data failed");
         retval = -1;
@@ -254,11 +253,11 @@ end:
  *  \retval true if reassembled file was added
  *  \retval false if no reassembled file was added
  */
-bool HTPFileCloseHandleRange(FileContainer *files, const uint16_t flags, HttpRangeContainerBlock *c,
-        const uint8_t *data, uint32_t data_len)
+bool HTPFileCloseHandleRange(const StreamingBufferConfig *sbcfg, FileContainer *files,
+        const uint16_t flags, HttpRangeContainerBlock *c, const uint8_t *data, uint32_t data_len)
 {
     bool added = false;
-    if (HttpRangeAppendData(c, data, data_len) < 0) {
+    if (HttpRangeAppendData(sbcfg, c, data, data_len) < 0) {
         SCLogDebug("Failed to append data");
     }
     if (c->container) {
@@ -268,7 +267,7 @@ bool HTPFileCloseHandleRange(FileContainer *files, const uint16_t flags, HttpRan
         if (c->container->error) {
             SCLogDebug("range in ERROR state");
         }
-        File *ranged = HttpRangeClose(c, flags);
+        File *ranged = HttpRangeClose(sbcfg, c, flags);
         if (ranged && files) {
             /* HtpState owns the constructed file now */
             FileContainerAdd(files, ranged);
@@ -296,8 +295,8 @@ bool HTPFileCloseHandleRange(FileContainer *files, const uint16_t flags, HttpRan
  *  \retval -1 error
  *  \retval -2 not storing files on this flow/tx
  */
-int HTPFileClose(
-        HtpTxUserData *tx, const uint8_t *data, uint32_t data_len, uint8_t flags, uint8_t direction)
+int HTPFileClose(HtpState *s, HtpTxUserData *tx, const uint8_t *data, uint32_t data_len,
+        uint8_t flags, uint8_t direction)
 {
     SCEnter();
 
@@ -312,6 +311,7 @@ int HTPFileClose(
     } else {
         files = &tx->files_ts;
     }
+
     SCLogDebug("files %p data %p data_len %" PRIu32, files, data, data_len);
 
     if (files == NULL) {
@@ -319,7 +319,7 @@ int HTPFileClose(
         goto end;
     }
 
-    result = FileCloseFile(files, data, data_len, flags);
+    result = FileCloseFile(files, &htp_sbcfg, data, data_len, flags);
     if (result == -1) {
         retval = -1;
     } else if (result == -2) {
@@ -328,7 +328,8 @@ int HTPFileClose(
     SCLogDebug("result %u", result);
 
     if (tx->file_range != NULL) {
-        bool added = HTPFileCloseHandleRange(files, flags, tx->file_range, data, data_len);
+        bool added =
+                HTPFileCloseHandleRange(&htp_sbcfg, files, flags, tx->file_range, data, data_len);
         if (added) {
             tx->tx_data.files_opened++;
         }

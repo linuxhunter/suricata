@@ -36,6 +36,12 @@
 #define _GNU_SOURCE
 #define __USE_GNU
 
+#if defined(__clang_analyzer__)
+/* clang analyzer acts as DEBUG_VALIDATION in some places, so
+ * force this so #ifdef DEBUG_VALIDATION code gets included */
+#define DEBUG_VALIDATION 1
+#endif
+
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define SC_ADDRESS_SANITIZER 1
@@ -478,6 +484,7 @@ typedef enum {
     LOGGER_PCAP,
     LOGGER_JSON_METADATA,
     LOGGER_JSON_FRAME,
+    LOGGER_JSON_STREAM,
     LOGGER_RADIS_ICS,
     LOGGER_SIZE,
 } LoggerId;
@@ -498,6 +505,7 @@ typedef void lua_State;
 
 #include "tm-threads-common.h"
 #include "util-optimize.h"
+#include "util-time.h"
 #include "util-mem.h"
 #include "util-memcmp.h"
 #include "util-atomic.h"

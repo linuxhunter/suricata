@@ -130,6 +130,7 @@
 #include "util-device.h"
 #include "util-dpdk.h"
 #include "util-ebpf.h"
+#include "util-exception-policy.h"
 #include "util-host-os-info.h"
 #include "util-ioctl.h"
 #include "util-landlock.h"
@@ -341,6 +342,7 @@ void GlobalsInitPreConfig(void)
     SupportFastPatternForSigMatchTypes();
     SCThresholdConfGlobalInit();
     SCProtoNameInit();
+    FrameConfigInit();
 }
 
 static void GlobalsDestroy(SCInstance *suri)
@@ -680,6 +682,7 @@ static void PrintUsage(const char *progname)
 #ifdef HAVE_LIBNET11
     printf("\t--reject-dev <dev>                   : send reject packets from this interface\n");
 #endif
+    printf("\t--include <path>                     : additonal configuration file\n");
     printf("\t--set name=value                     : set a configuration value\n");
     printf("\n");
     printf("\nTo run the engine with default configuration on "
@@ -690,8 +693,8 @@ static void PrintUsage(const char *progname)
 
 static void PrintBuildInfo(void)
 {
-    const char *bits = "<unknown>-bits";
-    const char *endian = "<unknown>-endian";
+    const char *bits;
+    const char *endian;
     char features[2048] = "";
     const char *tls;
 
@@ -823,12 +826,16 @@ static void PrintBuildInfo(void)
     bits = "64-bits";
 #elif __WORDSIZE == 32
     bits = "32-bits";
+#else
+    bits = "<unknown>-bits";
 #endif
 
 #if __BYTE_ORDER == __BIG_ENDIAN
     endian = "Big-endian";
 #elif __BYTE_ORDER == __LITTLE_ENDIAN
     endian = "Little-endian";
+#else
+    endian = "<unknown>-endian";
 #endif
 
     printf("%s, %s architecture\n", bits, endian);
@@ -961,6 +968,13 @@ static TmEcode LoadYamlConfig(SCInstance *suri)
     if (ConfYamlLoadFile(suri->conf_filename) != 0) {
         /* Error already displayed. */
         SCReturnInt(TM_ECODE_FAILED);
+    }
+
+    if (suri->additional_configs) {
+        for (int i = 0; suri->additional_configs[i] != NULL; i++) {
+            SCLogConfig("Loading additional configuration file %s", suri->additional_configs[i]);
+            ConfYamlHandleInclude(ConfGetRootNode(), suri->additional_configs[i]);
+        }
     }
 
     SCReturnInt(TM_ECODE_OK);
@@ -1393,6 +1407,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"simulate-packet-tcp-ssn-memcap", required_argument, 0, 0},
         {"simulate-packet-defrag-memcap", required_argument, 0, 0},
         {"simulate-alert-queue-realloc-failure", 0, 0, 0},
+        {"include", required_argument, 0, 0},
 
         {NULL, 0, NULL, 0}
     };
@@ -1763,6 +1778,33 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 }
                 if (suri->strict_rule_parsing_string == NULL) {
                     FatalError("failed to duplicate 'strict' string");
+                }
+            } else if (strcmp((long_opts[option_index]).name, "include") == 0) {
+                if (suri->additional_configs == NULL) {
+                    suri->additional_configs = SCCalloc(2, sizeof(char *));
+                    if (suri->additional_configs == NULL) {
+                        FatalError(
+                                "Failed to allocate memory for additional configuration files: %s",
+                                strerror(errno));
+                    }
+                    suri->additional_configs[0] = optarg;
+                } else {
+                    for (int i = 0;; i++) {
+                        if (suri->additional_configs[i] == NULL) {
+                            const char **additional_configs =
+                                    SCRealloc(suri->additional_configs, (i + 2) * sizeof(char *));
+                            if (additional_configs == NULL) {
+                                FatalError("Failed to allocate memory for additional configuration "
+                                           "files: %s",
+                                        strerror(errno));
+                            } else {
+                                suri->additional_configs = additional_configs;
+                            }
+                            suri->additional_configs[i] = optarg;
+                            suri->additional_configs[i + 1] = NULL;
+                            break;
+                        }
+                    }
                 }
             } else {
                 int r = ExceptionSimulationCommandlineParser(
@@ -2433,9 +2475,9 @@ static int ConfigGetCaptureValue(SCInstance *suri)
             case RUNMODE_AFP_DEV:
             case RUNMODE_AFXDP_DEV:
             case RUNMODE_PFRING:
-                nlive = LiveGetDeviceNameCount();
+                nlive = LiveGetDeviceCount();
                 for (lthread = 0; lthread < nlive; lthread++) {
-                    const char *live_dev = LiveGetDeviceNameName(lthread);
+                    const char *live_dev = LiveGetDeviceName(lthread);
                     char dev[128]; /* need to be able to support GUID names on Windows */
                     (void)strlcpy(dev, live_dev, sizeof(dev));
 
@@ -2531,30 +2573,6 @@ void PostConfLoadedDetectSetup(SCInstance *suri)
         DetectEngineAddToMaster(de_ctx);
         DetectEngineBumpVersion();
     }
-}
-
-static int PostDeviceFinalizedSetup(SCInstance *suri)
-{
-    SCEnter();
-
-#ifdef HAVE_AF_PACKET
-    if (suri->run_mode == RUNMODE_AFP_DEV) {
-        if (AFPRunModeIsIPS()) {
-            SCLogInfo("AF_PACKET: Setting IPS mode");
-            EngineModeSetIPS();
-        }
-    }
-#endif
-#ifdef HAVE_NETMAP
-    if (suri->run_mode == RUNMODE_NETMAP) {
-        if (NetmapRunModeIsIPS()) {
-            SCLogInfo("Netmap: Setting IPS mode");
-            EngineModeSetIPS();
-        }
-    }
-#endif
-
-    SCReturnInt(TM_ECODE_OK);
 }
 
 static void PostConfLoadedSetupHostMode(void)
@@ -2668,6 +2686,13 @@ int PostConfLoadedSetup(SCInstance *suri)
 
     MacSetRegisterFlowStorage();
 
+    SetMasterExceptionPolicy();
+
+    LiveDeviceFinalize(); // must be after EBPF extension registration
+
+    RunModeEngineIsIPS(
+            suricata.run_mode, suricata.runmode_custom_mode, suricata.capture_plugin_name);
+
     AppLayerSetup();
 
     /* Suricata will use this umask if provided. By default it will use the
@@ -2776,13 +2801,6 @@ int PostConfLoadedSetup(SCInstance *suri)
     CoredumpLoadConfig();
 
     DecodeGlobalConfig();
-
-    LiveDeviceFinalize();
-
-    /* set engine mode if L2 IPS */
-    if (PostDeviceFinalizedSetup(suri) != TM_ECODE_OK) {
-        exit(EXIT_FAILURE);
-    }
 
     /* hostmode depends on engine mode being set */
     PostConfLoadedSetupHostMode();

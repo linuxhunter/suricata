@@ -165,6 +165,9 @@ static inline bool TmThreadsHandleInjectedPackets(ThreadVars *tv)
             SCMutexUnlock(&pq->mutex_q);
             if (extra_p == NULL)
                 break;
+#ifdef DEBUG_VALIDATION
+            BUG_ON(extra_p->flow != NULL);
+#endif
             TmEcode r = TmThreadsSlotVarRun(tv, extra_p, tv->tm_flowworker);
             if (r == TM_ECODE_FAILED) {
                 TmThreadsSlotProcessPktFail(tv, tv->tm_flowworker, extra_p);
@@ -250,13 +253,34 @@ static inline void TmThreadsCaptureHandleTimeout(ThreadVars *tv, Packet *p)
         tv->tmqh_out(tv, p);
 }
 
+static inline void TmThreadsCaptureBreakLoop(ThreadVars *tv)
+{
+    if (unlikely(!tv->break_loop))
+        return;
+
+    if ((tv->tmm_flags & TM_FLAG_RECEIVE_TM) == 0) {
+        return;
+    }
+    /* find the correct slot */
+    TmSlot *s = tv->tm_slots;
+    TmModule *tm = TmModuleGetById(s->tm_id);
+    if (tm->flags & TM_FLAG_RECEIVE_TM) {
+        /* if the method supports it, BreakLoop. Otherwise we rely on
+         * the capture method's recv timeout */
+        if (tm->PktAcqLoop && tm->PktAcqBreakLoop) {
+            tm->PktAcqBreakLoop(tv, SC_ATOMIC_GET(s->slot_data));
+        }
+        TmThreadsSetFlag(tv, THV_CAPTURE_INJECT_PKT);
+    }
+}
+
 void TmThreadsListThreads(void);
 int TmThreadsRegisterThread(ThreadVars *tv, const int type);
 void TmThreadsUnregisterThread(const int id);
 void TmThreadsInjectFlowById(Flow *f, const int id);
 
-void TmThreadsInitThreadsTimestamp(const struct timeval *ts);
-void TmThreadsSetThreadTimestamp(const int id, const struct timeval *ts);
+void TmThreadsInitThreadsTimestamp(const SCTime_t ts);
+void TmThreadsSetThreadTimestamp(const int id, const SCTime_t ts);
 void TmThreadsGetMinimalTimestamp(struct timeval *ts);
 uint16_t TmThreadsGetWorkerThreadMax(void);
 bool TmThreadsTimeSubsysIsReady(void);

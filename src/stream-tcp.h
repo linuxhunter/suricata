@@ -57,28 +57,27 @@ typedef struct TcpStreamCnf_ {
     uint32_t prealloc_sessions; /**< ssns to prealloc per stream thread */
     uint32_t prealloc_segments; /**< segments to prealloc per stream thread */
     bool midstream;
-    int async_oneside;
+    bool async_oneside;
+    bool streaming_log_api;
+    uint8_t max_syn_queued;
+
     uint32_t reassembly_depth;  /**< Depth until when we reassemble the stream */
 
     uint16_t reassembly_toserver_chunk_size;
     uint16_t reassembly_toclient_chunk_size;
 
-    bool streaming_log_api;
-
     enum ExceptionPolicy ssn_memcap_policy;
     enum ExceptionPolicy reassembly_memcap_policy;
     enum ExceptionPolicy midstream_policy;
+
+    /* default to "LINUX" timestamp behavior if true*/
+    bool liberal_timestamps;
 
     StreamingBufferConfig sbcnf;
 } TcpStreamCnf;
 
 typedef struct StreamTcpThread_ {
     int ssn_pool_id;
-
-    /** queue for pseudo packet(s) that were created in the stream
-     *  process and need further handling. Currently only used when
-     *  receiving (valid) RST packets */
-    PacketQueueNoLock pseudo_queue;
 
     uint16_t counter_tcp_active_sessions;
     uint16_t counter_tcp_sessions;
@@ -106,6 +105,8 @@ typedef struct StreamTcpThread_ {
     uint16_t counter_tcp_midstream_pickups;
     /** wrong thread */
     uint16_t counter_tcp_wrong_thread;
+    /** ack for unseed data */
+    uint16_t counter_tcp_ack_unseen_data;
 
     /** tcp reassembly thread data */
     TcpReassemblyThreadCtx *ra_ctx;
@@ -126,8 +127,6 @@ uint64_t StreamTcpGetMemcap(void);
 int StreamTcpCheckMemcap(uint64_t);
 uint64_t StreamTcpMemuseCounter(void);
 uint64_t StreamTcpReassembleMemuseGlobalCounter(void);
-
-Packet *StreamTcpPseudoSetup(Packet *, uint8_t *, uint32_t);
 
 int StreamTcpSegmentForEach(const Packet *p, uint8_t flag,
                         StreamSegmentCallback CallbackFunc,
@@ -202,7 +201,6 @@ void StreamTcpSessionCleanup(TcpSession *ssn);
 void StreamTcpStreamCleanup(TcpStream *stream);
 /* check if bypass is enabled */
 int StreamTcpBypassEnabled(void);
-int StreamTcpInlineDropInvalid(void);
 int StreamTcpInlineMode(void);
 
 int TcpSessionPacketSsnReuse(const Packet *p, const Flow *f, const void *tcp_ssn);
@@ -212,6 +210,7 @@ void StreamTcpUpdateAppLayerProgress(TcpSession *ssn, char direction,
 
 uint64_t StreamTcpGetAcked(const TcpStream *stream);
 uint64_t StreamTcpGetUsable(const TcpStream *stream, const bool eof);
+uint64_t StreamDataRightEdge(const TcpStream *stream, const bool eof);
 
 void StreamTcpThreadCacheEnable(void);
 void StreamTcpThreadCacheCleanup(void);

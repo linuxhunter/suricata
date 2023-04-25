@@ -16,13 +16,13 @@ In the main ("master") YAML, the suricata.yaml, a new section called
 
 Settings:
 
-* enabled: yes/no -> is multi-tenancy support enable
+* enabled: yes/no -> is multi-tenancy support enabled
 * default: yes/no -> is the normal detect config a default 'fall back' tenant?
 * selector: direct (for unix socket pcap processing, see below), vlan or device
 * loaders: number of 'loader' threads, for parallel tenant loading at startup
 * tenants: list of tenants
 
-  * id: tenant id
+  * id: tenant id (numeric values only)
   * yaml: separate yaml file with the tenant specific settings
 
 * mappings:

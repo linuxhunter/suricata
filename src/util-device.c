@@ -191,49 +191,6 @@ const char *LiveGetDeviceName(int number)
     return NULL;
 }
 
-/**
- *  \brief Get the number of pre registered devices
- *
- *  \retval cnt the number of pre registered devices
- */
-int LiveGetDeviceNameCount(void)
-{
-    int i = 0;
-    LiveDeviceName *pd;
-
-    TAILQ_FOREACH(pd, &pre_live_devices, next) {
-        i++;
-    }
-
-    return i;
-}
-
-/**
- *  \brief Get a pointer to the pre device name at idx
- *
- *  \param number idx of the pre device in our list
- *
- *  \retval ptr pointer to the string containing the device
- *  \retval NULL on error
- */
-const char *LiveGetDeviceNameName(int number)
-{
-    int i = 0;
-    LiveDeviceName *pd;
-
-    TAILQ_FOREACH(pd, &pre_live_devices, next) {
-        if (i == number) {
-            return pd->dev;
-        }
-
-        i++;
-    }
-
-    return NULL;
-}
-
-
-
 /** \internal
  *  \brief Shorten a device name that is to long
  *
@@ -284,7 +241,6 @@ static int LiveSafeDeviceName(const char *devname, char *newdevname, size_t dest
  */
 LiveDevice *LiveGetDevice(const char *name)
 {
-    int i = 0;
     LiveDevice *pd;
 
     if (name == NULL) {
@@ -296,8 +252,6 @@ LiveDevice *LiveGetDevice(const char *name)
         if (!strcmp(name, pd->dev)) {
             return pd;
         }
-
-        i++;
     }
 
     return NULL;
@@ -346,12 +300,12 @@ int LiveBuildDeviceListCustom(const char *runmode, const char *itemname)
  *
  * This can be useful in the case, this is not a real interface.
  */
-void LiveDeviceHasNoStats()
+void LiveDeviceHasNoStats(void)
 {
     live_devices_stats = 0;
 }
 
-int LiveDeviceListClean()
+int LiveDeviceListClean(void)
 {
     SCEnter();
     LiveDevice *pd, *tpd;

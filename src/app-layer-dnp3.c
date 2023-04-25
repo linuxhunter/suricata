@@ -499,6 +499,11 @@ static DNP3Transaction *DNP3TxAlloc(DNP3State *dnp3, bool request)
     tx->dnp3 = dnp3;
     tx->tx_num = dnp3->transaction_max;
     tx->is_request = request;
+    if (tx->is_request) {
+        tx->tx_data.detect_flags_tc |= APP_LAYER_TX_SKIP_INSPECT_FLAG;
+    } else {
+        tx->tx_data.detect_flags_ts |= APP_LAYER_TX_SKIP_INSPECT_FLAG;
+    }
     TAILQ_INIT(&tx->objects);
     TAILQ_INSERT_TAIL(&dnp3->tx_list, tx, next);
 
@@ -1423,31 +1428,8 @@ static int DNP3GetAlstateProgress(void *tx, uint8_t direction)
         SCReturnInt(1);
     }
 
-    /* This is a unidirectional protocol.
-     *
-     * If progress is being checked in the TOSERVER (request)
-     * direction, always return complete if the message is not a
-     * request, as there will never be replies on transactions created
-     * in the TOSERVER direction.
-     *
-     * Like wise, if progress is being checked in the TOCLIENT
-     * direction, requests will never be seen. So always return
-     * complete if the transaction is not a reply.
-     *
-     * Otherwise, if TOSERVER and transaction is a request, return
-     * complete if the transaction is complete. And if TOCLIENT and
-     * transaction is a response, return complete if the transaction
-     * is complete.
-     */
-    if (direction & STREAM_TOSERVER) {
-        if (!dnp3tx->is_request || dnp3tx->complete) {
-            retval = 1;
-        }
-    } else if (direction & STREAM_TOCLIENT) {
-        if (dnp3tx->is_request || dnp3tx->complete) {
-            retval = 1;
-        }
-    }
+    if (dnp3tx->complete)
+        retval = 1;
 
     SCReturnInt(retval);
 }
@@ -1520,6 +1502,40 @@ int DNP3PrefixIsSize(uint8_t prefix_code)
     }
 }
 
+static AppLayerGetTxIterTuple DNP3GetTxIterator(const uint8_t ipproto, const AppProto alproto,
+        void *alstate, uint64_t min_tx_id, uint64_t max_tx_id, AppLayerGetTxIterState *state)
+{
+    DNP3State *dnp_state = (DNP3State *)alstate;
+    AppLayerGetTxIterTuple no_tuple = { NULL, 0, false };
+    if (dnp_state) {
+        DNP3Transaction *tx_ptr;
+        if (state->un.ptr == NULL) {
+            tx_ptr = TAILQ_FIRST(&dnp_state->tx_list);
+        } else {
+            tx_ptr = (DNP3Transaction *)state->un.ptr;
+        }
+        if (tx_ptr) {
+            while (tx_ptr->tx_num < min_tx_id + 1) {
+                tx_ptr = TAILQ_NEXT(tx_ptr, next);
+                if (!tx_ptr) {
+                    return no_tuple;
+                }
+            }
+            if (tx_ptr->tx_num >= max_tx_id + 1) {
+                return no_tuple;
+            }
+            state->un.ptr = TAILQ_NEXT(tx_ptr, next);
+            AppLayerGetTxIterTuple tuple = {
+                .tx_ptr = tx_ptr,
+                .tx_id = tx_ptr->tx_num - 1,
+                .has_next = (state->un.ptr != NULL),
+            };
+            return tuple;
+        }
+    }
+    return no_tuple;
+}
+
 /**
  * \brief Register the DNP3 application protocol parser.
  */
@@ -1563,6 +1579,7 @@ void RegisterDNP3Parsers(void)
             DNP3StateAlloc, DNP3StateFree);
 
         AppLayerParserRegisterGetTx(IPPROTO_TCP, ALPROTO_DNP3, DNP3GetTx);
+        AppLayerParserRegisterGetTxIterator(IPPROTO_TCP, ALPROTO_DNP3, DNP3GetTxIterator);
         AppLayerParserRegisterGetTxCnt(IPPROTO_TCP, ALPROTO_DNP3, DNP3GetTxCnt);
         AppLayerParserRegisterTxFreeFunc(IPPROTO_TCP, ALPROTO_DNP3,
             DNP3StateTxFree);
@@ -1579,12 +1596,9 @@ void RegisterDNP3Parsers(void)
         AppLayerParserRegisterTxDataFunc(IPPROTO_TCP, ALPROTO_DNP3,
             DNP3GetTxData);
         AppLayerParserRegisterStateDataFunc(IPPROTO_TCP, ALPROTO_DNP3, DNP3GetStateData);
-#if 0
-        /* While this parser is now fully unidirectional. setting this
-         * flag breaks detection at this time. */
+
         AppLayerParserRegisterOptionFlags(
                 IPPROTO_TCP, ALPROTO_DNP3, APP_LAYER_PARSER_OPT_UNIDIR_TXS);
-#endif
     }
     else {
         SCLogConfig("Parser disabled for protocol %s. "

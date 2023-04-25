@@ -172,9 +172,8 @@ static int FlowFinish(ThreadVars *tv, Flow *f, FlowWorkerThreadData *fw, void *d
 }
 
 /** \param[in] max_work Max flows to process. 0 if unlimited. */
-static void CheckWorkQueue(ThreadVars *tv, FlowWorkerThreadData *fw,
-        void *detect_thread, // TODO proper type?
-        FlowTimeoutCounters *counters, FlowQueuePrivate *fq, const uint32_t max_work)
+static void CheckWorkQueue(ThreadVars *tv, FlowWorkerThreadData *fw, FlowTimeoutCounters *counters,
+        FlowQueuePrivate *fq, const uint32_t max_work)
 {
     uint32_t i = 0;
     Flow *f;
@@ -185,16 +184,15 @@ static void CheckWorkQueue(ThreadVars *tv, FlowWorkerThreadData *fw,
         if (f->proto == IPPROTO_TCP) {
             if (!(f->flags & FLOW_TIMEOUT_REASSEMBLY_DONE) && !FlowIsBypassed(f) &&
                     FlowForceReassemblyNeedReassembly(f) == 1 && f->ffr != 0) {
+                /* read detect thread in case we're doing a reload */
+                void *detect_thread = SC_ATOMIC_GET(fw->detect_thread);
                 int cnt = FlowFinish(tv, f, fw, detect_thread);
                 counters->flows_aside_pkt_inject += cnt;
                 counters->flows_aside_needs_work++;
             }
         }
 
-        /* this should not be possible */
-        BUG_ON(f->use_cnt > 0);
-
-        /* no one is referring to this flow, use_cnt 0, removed from hash
+        /* no one is referring to this flow, removed from hash
          * so we can unlock it and pass it to the flow recycler */
 
         if (fw->output_thread_flow != NULL)
@@ -401,6 +399,16 @@ static inline void FlowWorkerStreamTCPUpdate(ThreadVars *tv, FlowWorkerThreadDat
 
         OutputLoggerLog(tv, x, fw->output_thread);
 
+        FramesPrune(x->flow, x);
+        /*  Release tcp segments. Done here after alerting can use them. */
+        FLOWWORKER_PROFILING_START(x, PROFILE_FLOWWORKER_TCPPRUNE);
+        StreamTcpPruneSession(
+                x->flow, x->flowflags & FLOW_PKT_TOSERVER ? STREAM_TOSERVER : STREAM_TOCLIENT);
+        FLOWWORKER_PROFILING_END(x, PROFILE_FLOWWORKER_TCPPRUNE);
+
+        /* no need to keep a flow ref beyond this point */
+        FlowDeReference(&x->flow);
+
         if (timeout) {
             PacketPoolReturnPacket(x);
         } else {
@@ -454,8 +462,8 @@ static void FlowWorkerFlowTimeout(ThreadVars *tv, Packet *p, FlowWorkerThreadDat
 /** \internal
  *  \brief process flows injected into our queue by other threads
  */
-static inline void FlowWorkerProcessInjectedFlows(ThreadVars *tv,
-        FlowWorkerThreadData *fw, Packet *p, void *detect_thread)
+static inline void FlowWorkerProcessInjectedFlows(
+        ThreadVars *tv, FlowWorkerThreadData *fw, Packet *p)
 {
     /* take injected flows and append to our work queue */
     FLOWWORKER_PROFILING_START(p, PROFILE_FLOWWORKER_FLOW_INJECTED);
@@ -476,8 +484,7 @@ static inline void FlowWorkerProcessInjectedFlows(ThreadVars *tv,
 /** \internal
  *  \brief process flows set aside locally during flow lookup
  */
-static inline void FlowWorkerProcessLocalFlows(ThreadVars *tv,
-        FlowWorkerThreadData *fw, Packet *p, void *detect_thread)
+static inline void FlowWorkerProcessLocalFlows(ThreadVars *tv, FlowWorkerThreadData *fw, Packet *p)
 {
     uint32_t max_work = 2;
     if (PKT_IS_PSEUDOPKT(p))
@@ -488,7 +495,7 @@ static inline void FlowWorkerProcessLocalFlows(ThreadVars *tv,
         StatsAddUI64(tv, fw->cnt.flows_removed, (uint64_t)fw->fls.work_queue.len);
 
         FlowTimeoutCounters counters = { 0, 0, };
-        CheckWorkQueue(tv, fw, detect_thread, &counters, &fw->fls.work_queue, max_work);
+        CheckWorkQueue(tv, fw, &counters, &fw->fls.work_queue, max_work);
         UpdateCounters(tv, fw, &counters);
     }
     FLOWWORKER_PROFILING_END(p, PROFILE_FLOWWORKER_FLOW_EVICTED);
@@ -506,7 +513,7 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
 
     /* update time */
     if (!(PKT_IS_PSEUDOPKT(p))) {
-        TimeSetByThread(tv->id, &p->ts);
+        TimeSetByThread(tv->id, p->ts);
     }
 
     /* handle Flow */
@@ -610,10 +617,10 @@ static TmEcode FlowWorker(ThreadVars *tv, Packet *p, void *data)
 housekeeping:
 
     /* take injected flows and add them to our local queue */
-    FlowWorkerProcessInjectedFlows(tv, fw, p, detect_thread);
+    FlowWorkerProcessInjectedFlows(tv, fw, p);
 
     /* process local work queue */
-    FlowWorkerProcessLocalFlows(tv, fw, p, detect_thread);
+    FlowWorkerProcessLocalFlows(tv, fw, p);
 
     return TM_ECODE_OK;
 }

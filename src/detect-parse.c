@@ -120,8 +120,9 @@ const char *DetectListToHumanString(int list)
     switch (list) {
         CASE_CODE_STRING(DETECT_SM_LIST_MATCH, "packet");
         CASE_CODE_STRING(DETECT_SM_LIST_PMATCH, "payload");
-        CASE_CODE_STRING(DETECT_SM_LIST_TMATCH, "tag");
+        CASE_CODE_STRING(DETECT_SM_LIST_BASE64_DATA, "base64_data");
         CASE_CODE_STRING(DETECT_SM_LIST_POSTMATCH, "postmatch");
+        CASE_CODE_STRING(DETECT_SM_LIST_TMATCH, "tag");
         CASE_CODE_STRING(DETECT_SM_LIST_SUPPRESS, "suppress");
         CASE_CODE_STRING(DETECT_SM_LIST_THRESHOLD, "threshold");
         CASE_CODE_STRING(DETECT_SM_LIST_MAX, "max (internal)");
@@ -136,6 +137,7 @@ const char *DetectListToString(int list)
     switch (list) {
         CASE_CODE(DETECT_SM_LIST_MATCH);
         CASE_CODE(DETECT_SM_LIST_PMATCH);
+        CASE_CODE(DETECT_SM_LIST_BASE64_DATA);
         CASE_CODE(DETECT_SM_LIST_TMATCH);
         CASE_CODE(DETECT_SM_LIST_POSTMATCH);
         CASE_CODE(DETECT_SM_LIST_SUPPRESS);
@@ -438,7 +440,8 @@ SigMatch *DetectGetLastSMFromMpmLists(const DetectEngineCtx *de_ctx, const Signa
     uint32_t sm_type;
 
     /* if we have a sticky buffer, use that */
-    if (s->init_data->list != DETECT_SM_LIST_NOTSET) {
+    if (s->init_data->list != DETECT_SM_LIST_NOTSET &&
+            s->init_data->list < (int)s->init_data->smlists_array_size) {
         if (!(DetectEngineBufferTypeSupportsMpmGetById(de_ctx, s->init_data->list))) {
             return NULL;
         }
@@ -1683,7 +1686,6 @@ SigMatchData* SigMatchList2DataArray(SigMatch *head)
 static int SigValidate(DetectEngineCtx *de_ctx, Signature *s)
 {
     uint32_t sig_flags = 0;
-    SigMatch *sm;
     const int nlists = s->init_data->smlists_array_size;
 
     SCEnter();
@@ -1776,24 +1778,6 @@ static int SigValidate(DetectEngineCtx *de_ctx, Signature *s)
         SCReturnInt(0);
     }
 
-#if 0 // TODO figure out why this is even necessary
-    if ((s->init_data->smlists[DETECT_SM_LIST_FILEDATA] != NULL && s->alproto == ALPROTO_SMTP) ||
-        s->init_data->smlists[DETECT_SM_LIST_UMATCH] != NULL ||
-        s->init_data->smlists[DETECT_SM_LIST_HRUDMATCH] != NULL ||
-        s->init_data->smlists[DETECT_SM_LIST_HCBDMATCH] != NULL ||
-        s->init_data->smlists[DETECT_SM_LIST_HUADMATCH] != NULL) {
-        sig_flags |= SIG_FLAG_TOSERVER;
-        s->flags |= SIG_FLAG_TOSERVER;
-        s->flags &= ~SIG_FLAG_TOCLIENT;
-    }
-    if ((s->init_data->smlists[DETECT_SM_LIST_FILEDATA] != NULL && s->alproto == ALPROTO_HTTP1) ||
-        s->init_data->smlists[DETECT_SM_LIST_HSMDMATCH] != NULL ||
-        s->init_data->smlists[DETECT_SM_LIST_HSCDMATCH] != NULL) {
-        sig_flags |= SIG_FLAG_TOCLIENT;
-        s->flags |= SIG_FLAG_TOCLIENT;
-        s->flags &= ~SIG_FLAG_TOSERVER;
-    }
-#endif
     if ((sig_flags & (SIG_FLAG_TOCLIENT | SIG_FLAG_TOSERVER)) == (SIG_FLAG_TOCLIENT | SIG_FLAG_TOSERVER)) {
         SCLogError("You seem to have mixed keywords "
                    "that require inspection in both directions.  Atm we only "
@@ -1857,24 +1841,22 @@ static int SigValidate(DetectEngineCtx *de_ctx, Signature *s)
         if (s->init_data->smlists[DETECT_SM_LIST_PMATCH]) {
             if (!(s->flags & (SIG_FLAG_REQUIRE_PACKET | SIG_FLAG_REQUIRE_STREAM))) {
                 s->flags |= SIG_FLAG_REQUIRE_STREAM;
-                sm = s->init_data->smlists[DETECT_SM_LIST_PMATCH];
-                while (sm != NULL) {
+                for (SigMatch *sm = s->init_data->smlists[DETECT_SM_LIST_PMATCH]; sm != NULL;
+                        sm = sm->next) {
                     if (sm->type == DETECT_CONTENT &&
                             (((DetectContentData *)(sm->ctx))->flags &
                              (DETECT_CONTENT_DEPTH | DETECT_CONTENT_OFFSET))) {
                         s->flags |= SIG_FLAG_REQUIRE_PACKET;
                         break;
                     }
-                    sm = sm->next;
                 }
                 /* if stream_size is in use, also inspect packets */
-                sm = s->init_data->smlists[DETECT_SM_LIST_MATCH];
-                while (sm != NULL) {
+                for (SigMatch *sm = s->init_data->smlists[DETECT_SM_LIST_MATCH]; sm != NULL;
+                        sm = sm->next) {
                     if (sm->type == DETECT_STREAM_SIZE) {
                         s->flags |= SIG_FLAG_REQUIRE_PACKET;
                         break;
                     }
-                    sm = sm->next;
                 }
             }
         }
@@ -1908,10 +1890,9 @@ static int SigValidate(DetectEngineCtx *de_ctx, Signature *s)
 #endif
 
 #ifdef DEBUG
-    int i;
-    for (i = 0; i < nlists; i++) {
+    for (int i = 0; i < nlists; i++) {
         if (s->init_data->smlists[i] != NULL) {
-            for (sm = s->init_data->smlists[i]; sm != NULL; sm = sm->next) {
+            for (SigMatch *sm = s->init_data->smlists[i]; sm != NULL; sm = sm->next) {
                 BUG_ON(sm == sm->prev);
                 BUG_ON(sm == sm->next);
             }
@@ -2009,19 +1990,6 @@ static Signature *SigInitHelper(DetectEngineCtx *de_ctx, const char *sigstr,
          * against the app proto in use. */
         if (override_needed)
             AppLayerProtoDetectSupportedIpprotos(sig->alproto, sig->proto.proto);
-    }
-
-    ret = DetectAppLayerEventPrepare(de_ctx, sig);
-    if (ret == -3) {
-        de_ctx->sigerror_silent = true;
-        de_ctx->sigerror_ok = true;
-        goto error;
-    }
-    else if (ret == -2) {
-        de_ctx->sigerror_silent = true;
-        goto error;
-    } else if (ret < 0) {
-        goto error;
     }
 
     /* set the packet and app layer flags, but only if the
@@ -2380,7 +2348,7 @@ static inline int DetectEngineSignatureIsDuplicate(DetectEngineCtx *de_ctx,
         if (sw_temp.s != NULL) {
             sw_next = HashListTableLookup(de_ctx->dup_sig_hash_table,
                                           (void *)&sw_temp, 0);
-            sw_next->s_prev = sw_dup->s_prev;;
+            sw_next->s_prev = sw_dup->s_prev;
         }
         SigFree(de_ctx, sw_dup->s);
     }

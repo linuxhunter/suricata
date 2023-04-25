@@ -157,12 +157,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     // loop over packets
     r = FPC_next(&pkts, &header, &pkt);
     p = PacketGetFromAlloc();
-    if (header.ts.tv_sec >= INT_MAX - 3600) {
+    if (r <= 0 || header.ts.tv_sec >= INT_MAX - 3600) {
         goto bail;
     }
     p->pkt_src = PKT_SRC_WIRE;
-    p->ts.tv_sec = header.ts.tv_sec;
-    p->ts.tv_usec = header.ts.tv_usec % 1000000;
+    p->ts = SCTIME_FROM_TIMEVAL(&header.ts);
     p->datalink = pkts.datalink;
     while (r > 0) {
         if (PacketCopyData(p, pkt, header.caplen) == 0) {
@@ -184,13 +183,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             }
         }
         r = FPC_next(&pkts, &header, &pkt);
-        if (header.ts.tv_sec >= INT_MAX - 3600) {
+        if (r <= 0 || header.ts.tv_sec >= INT_MAX - 3600) {
             goto bail;
         }
         PacketRecycle(p);
         p->pkt_src = PKT_SRC_WIRE;
-        p->ts.tv_sec = header.ts.tv_sec;
-        p->ts.tv_usec = header.ts.tv_usec % 1000000;
+        p->ts = SCTIME_FROM_TIMEVAL(&header.ts);
         p->datalink = pkts.datalink;
         pcap_cnt++;
         p->pcap_cnt = pcap_cnt;

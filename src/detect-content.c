@@ -151,7 +151,7 @@ int DetectContentDataParse(const char *keyword, const char *contentstr,
                     else if (str[i] != ',') {
                         SCLogError("Invalid hex code in "
                                    "content - %s, hex %c. Invalidating signature.",
-                                str, str[i]);
+                                contentstr, str[i]);
                         goto error;
                     }
                 } else if (escape) {
@@ -412,13 +412,8 @@ void DetectContentFree(DetectEngineCtx *de_ctx, void *ptr)
  *  - Negated content values are checked but not accumulated for the required size.
  */
 void SigParseRequiredContentSize(
-        const Signature *s, const int max_size, int list, int *len, int *offset)
+        const Signature *s, const int max_size, const SigMatch *sm, int *len, int *offset)
 {
-    if (list > (int)s->init_data->smlists_array_size) {
-        return;
-    }
-
-    SigMatch *sm = s->init_data->smlists[list];
     int max_offset = 0, total_len = 0;
     bool first = true;
     for (; sm != NULL; sm = sm->next) {
@@ -501,199 +496,224 @@ bool DetectContentPMATCHValidateCallback(const Signature *s)
  *  cannot set a depth, but we can set an offset of 'offset:1;'. This will
  *  make the mpm a bit more precise.
  */
-void DetectContentPropagateLimits(Signature *s)
+static void PropagateLimits(Signature *s, SigMatch *sm_head)
 {
 #define VALIDATE(e)                                                                                \
     if (!(e)) {                                                                                    \
         return;                                                                                    \
     }
-    BUG_ON(s == NULL || s->init_data == NULL);
+    uint16_t offset = 0;
+    uint16_t offset_plus_pat = 0;
+    uint16_t depth = 0;
+    bool has_active_depth_chain = false;
 
-    uint32_t list = 0;
-    for (list = 0; list < s->init_data->smlists_array_size; list++) {
-        uint16_t offset = 0;
-        uint16_t offset_plus_pat = 0;
-        uint16_t depth = 0;
-        bool has_active_depth_chain = false;
+    bool has_depth = false;
+    bool has_ends_with = false;
+    uint16_t ends_with_depth = 0;
 
-        bool has_depth = false;
-        bool has_ends_with = false;
-        uint16_t ends_with_depth = 0;
+    for (SigMatch *sm = sm_head; sm != NULL; sm = sm->next) {
+        switch (sm->type) {
+            case DETECT_CONTENT: {
+                DetectContentData *cd = (DetectContentData *)sm->ctx;
+                if ((cd->flags & (DETECT_CONTENT_DEPTH | DETECT_CONTENT_OFFSET |
+                                         DETECT_CONTENT_WITHIN | DETECT_CONTENT_DISTANCE)) == 0) {
+                    offset = depth = 0;
+                    offset_plus_pat = cd->content_len;
+                    SCLogDebug("reset");
+                    has_active_depth_chain = false;
+                    continue;
+                }
+                if (sm->prev == NULL) {
+                    if (cd->distance >= 0 && cd->distance <= (int32_t)USHRT_MAX &&
+                            cd->within >= 0 && cd->within <= (int32_t)USHRT_MAX) {
+                        if (cd->flags & DETECT_CONTENT_DISTANCE) {
+                            if (cd->distance > 0)
+                                cd->flags |= DETECT_CONTENT_OFFSET;
+                            cd->flags &= ~DETECT_CONTENT_DISTANCE;
+                            cd->offset = (uint16_t)cd->distance;
+                            cd->distance = 0;
+                            cd->flags |= DETECT_CONTENT_DISTANCE2OFFSET;
+                        }
+                        if (cd->flags & DETECT_CONTENT_WITHIN) {
+                            cd->flags |= DETECT_CONTENT_DEPTH;
+                            cd->flags &= ~DETECT_CONTENT_WITHIN;
+                            cd->depth = (uint16_t)cd->within + cd->offset;
+                            cd->within = 0;
+                            cd->flags |= DETECT_CONTENT_WITHIN2DEPTH;
+                        }
+                    }
+                }
 
-        SigMatch *sm = s->init_data->smlists[list];
-        for ( ; sm != NULL; sm = sm->next) {
+                if (cd->flags & DETECT_CONTENT_NEGATED) {
+                    offset = depth = 0;
+                    offset_plus_pat = 0;
+                    SCLogDebug("reset because of negation");
+                    has_active_depth_chain = false;
+                    continue;
+                }
+
+                if (cd->depth) {
+                    has_depth = true;
+                    has_active_depth_chain = true;
+                }
+
+                SCLogDebug("sm %p depth %u offset %u distance %d within %d", sm, cd->depth,
+                        cd->offset, cd->distance, cd->within);
+                SCLogDebug("stored: offset %u depth %u offset_plus_pat %u", offset, depth,
+                        offset_plus_pat);
+
+                if ((cd->flags & (DETECT_DEPTH | DETECT_CONTENT_WITHIN)) == 0) {
+                    if (depth)
+                        SCLogDebug("no within, reset depth");
+                    depth = 0;
+                    has_active_depth_chain = false;
+                }
+                if ((cd->flags & DETECT_CONTENT_DISTANCE) == 0) {
+                    if (offset_plus_pat)
+                        SCLogDebug("no distance, reset offset_plus_pat & offset");
+                    offset_plus_pat = offset = 0;
+                }
+
+                SCLogDebug("stored: offset %u depth %u offset_plus_pat %u "
+                           "has_active_depth_chain %s",
+                        offset, depth, offset_plus_pat, has_active_depth_chain ? "true" : "false");
+                if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance >= 0) {
+                    VALIDATE((uint32_t)offset_plus_pat + cd->distance <= UINT16_MAX);
+                    offset = cd->offset = (uint16_t)(offset_plus_pat + cd->distance);
+                    SCLogDebug("updated content to have offset %u", cd->offset);
+                }
+                if (has_active_depth_chain) {
+                    if (offset_plus_pat && cd->flags & DETECT_CONTENT_WITHIN && cd->within >= 0) {
+                        if (depth && depth > offset_plus_pat) {
+                            int32_t dist = 0;
+                            if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance > 0) {
+                                dist = cd->distance;
+                                SCLogDebug(
+                                        "distance to add: %u. depth + dist %u", dist, depth + dist);
+                            }
+                            SCLogDebug("depth %u + cd->within %u", depth, cd->within);
+                            VALIDATE(depth + cd->within + dist >= 0 &&
+                                     depth + cd->within + dist <= UINT16_MAX);
+                            depth = cd->depth = (uint16_t)(depth + cd->within + dist);
+                        } else {
+                            SCLogDebug("offset %u + cd->within %u", offset, cd->within);
+                            VALIDATE(depth + cd->within >= 0 && depth + cd->within <= UINT16_MAX);
+                            depth = cd->depth = (uint16_t)(offset + cd->within);
+                        }
+                        SCLogDebug("updated content to have depth %u", cd->depth);
+                    } else {
+                        if (cd->depth == 0 && depth != 0) {
+                            if (cd->within > 0) {
+                                SCLogDebug("within %d distance %d", cd->within, cd->distance);
+                                if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance >= 0) {
+                                    VALIDATE(offset_plus_pat + cd->distance >= 0 &&
+                                             offset_plus_pat + cd->distance <= UINT16_MAX);
+                                    cd->offset = (uint16_t)(offset_plus_pat + cd->distance);
+                                    SCLogDebug("updated content to have offset %u", cd->offset);
+                                }
+
+                                VALIDATE(depth + cd->within >= 0 &&
+                                         depth + cd->within <= UINT16_MAX);
+                                depth = cd->depth = (uint16_t)(cd->within + depth);
+                                SCLogDebug("updated content to have depth %u", cd->depth);
+
+                                if (cd->flags & DETECT_CONTENT_ENDS_WITH) {
+                                    has_ends_with = true;
+                                    if (ends_with_depth == 0)
+                                        ends_with_depth = depth;
+                                    ends_with_depth = MIN(ends_with_depth, depth);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (cd->offset == 0) { // && offset != 0) {
+                    if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance >= 0) {
+                        cd->offset = offset_plus_pat;
+                        SCLogDebug("update content to have offset %u", cd->offset);
+                    }
+                }
+
+                if ((cd->flags & (DETECT_CONTENT_DEPTH | DETECT_CONTENT_OFFSET |
+                                         DETECT_CONTENT_WITHIN | DETECT_CONTENT_DISTANCE)) ==
+                                (DETECT_CONTENT_DISTANCE | DETECT_CONTENT_WITHIN) ||
+                        (cd->flags & (DETECT_CONTENT_DEPTH | DETECT_CONTENT_OFFSET |
+                                             DETECT_CONTENT_WITHIN | DETECT_CONTENT_DISTANCE)) ==
+                                (DETECT_CONTENT_DISTANCE)) {
+                    if (cd->distance >= 0) {
+                        // only distance
+                        VALIDATE((uint32_t)offset_plus_pat + cd->distance <= UINT16_MAX);
+                        offset = cd->offset = (uint16_t)(offset_plus_pat + cd->distance);
+                        offset_plus_pat = offset + cd->content_len;
+                        SCLogDebug("offset %u offset_plus_pat %u", offset, offset_plus_pat);
+                    }
+                }
+                if (cd->flags & DETECT_CONTENT_OFFSET) {
+                    offset = cd->offset;
+                    offset_plus_pat = offset + cd->content_len;
+                    SCLogDebug("stored offset %u offset_plus_pat %u", offset, offset_plus_pat);
+                }
+                if (cd->depth) {
+                    depth = cd->depth;
+                    SCLogDebug("stored depth now %u", depth);
+                    offset_plus_pat = offset + cd->content_len;
+                    if (cd->flags & DETECT_CONTENT_ENDS_WITH) {
+                        has_ends_with = true;
+                        if (ends_with_depth == 0)
+                            ends_with_depth = depth;
+                        ends_with_depth = MIN(ends_with_depth, depth);
+                    }
+                }
+                if ((cd->flags & (DETECT_CONTENT_WITHIN | DETECT_CONTENT_DEPTH)) == 0) {
+                    has_active_depth_chain = false;
+                    depth = 0;
+                }
+                break;
+            }
+            case DETECT_PCRE: {
+                // relative could leave offset_plus_pat set.
+                const DetectPcreData *pd = (const DetectPcreData *)sm->ctx;
+                if (pd->flags & DETECT_PCRE_RELATIVE) {
+                    depth = 0;
+                } else {
+                    SCLogDebug("non-anchored PCRE not supported, reset offset_plus_pat & offset");
+                    offset_plus_pat = offset = depth = 0;
+                }
+                has_active_depth_chain = false;
+                break;
+            }
+            default:
+                SCLogDebug("keyword not supported, reset offset_plus_pat & offset");
+                offset_plus_pat = offset = depth = 0;
+                has_active_depth_chain = false;
+                break;
+        }
+    }
+    /* apply anchored 'ends with' as depth to all patterns */
+    if (has_depth && has_ends_with) {
+        for (SigMatch *sm = sm_head; sm != NULL; sm = sm->next) {
             switch (sm->type) {
                 case DETECT_CONTENT: {
                     DetectContentData *cd = (DetectContentData *)sm->ctx;
-                    if ((cd->flags & (DETECT_CONTENT_DEPTH|DETECT_CONTENT_OFFSET|DETECT_CONTENT_WITHIN|DETECT_CONTENT_DISTANCE)) == 0) {
-                        offset = depth = 0;
-                        offset_plus_pat = cd->content_len;
-                        SCLogDebug("reset");
-                        has_active_depth_chain = false;
-                        continue;
-                    }
-                    if (cd->flags & DETECT_CONTENT_NEGATED) {
-                        offset = depth = 0;
-                        offset_plus_pat = 0;
-                        SCLogDebug("reset because of negation");
-                        has_active_depth_chain = false;
-                        continue;
-                    }
-
-                    if (cd->depth) {
-                        has_depth = true;
-                        has_active_depth_chain = true;
-                    }
-
-                    SCLogDebug("sm %p depth %u offset %u distance %d within %d", sm, cd->depth, cd->offset, cd->distance, cd->within);
-                    SCLogDebug("stored: offset %u depth %u offset_plus_pat %u", offset, depth, offset_plus_pat);
-
-                    if ((cd->flags & (DETECT_DEPTH | DETECT_CONTENT_WITHIN)) == 0) {
-                        if (depth)
-                            SCLogDebug("no within, reset depth");
-                        depth = 0;
-                        has_active_depth_chain = false;
-                    }
-                    if ((cd->flags & DETECT_CONTENT_DISTANCE) == 0) {
-                        if (offset_plus_pat)
-                            SCLogDebug("no distance, reset offset_plus_pat & offset");
-                        offset_plus_pat = offset = 0;
-                    }
-
-                    SCLogDebug("stored: offset %u depth %u offset_plus_pat %u "
-                               "has_active_depth_chain %s",
-                            offset, depth, offset_plus_pat,
-                            has_active_depth_chain ? "true" : "false");
-                    if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance >= 0) {
-                        VALIDATE((uint32_t)offset_plus_pat + cd->distance <= UINT16_MAX);
-                        offset = cd->offset = (uint16_t)(offset_plus_pat + cd->distance);
-                        SCLogDebug("updated content to have offset %u", cd->offset);
-                    }
-                    if (has_active_depth_chain) {
-                        if (offset_plus_pat && cd->flags & DETECT_CONTENT_WITHIN &&
-                                cd->within >= 0) {
-                            if (depth && depth > offset_plus_pat) {
-                                int32_t dist = 0;
-                                if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance > 0) {
-                                    dist = cd->distance;
-                                    SCLogDebug("distance to add: %u. depth + dist %u", dist,
-                                            depth + dist);
-                                }
-                                SCLogDebug("depth %u + cd->within %u", depth, cd->within);
-                                VALIDATE(depth + cd->within + dist >= 0 &&
-                                         depth + cd->within + dist <= UINT16_MAX);
-                                depth = cd->depth = (uint16_t)(depth + cd->within + dist);
-                            } else {
-                                SCLogDebug("offset %u + cd->within %u", offset, cd->within);
-                                VALIDATE(depth + cd->within >= 0 &&
-                                         depth + cd->within <= UINT16_MAX);
-                                depth = cd->depth = (uint16_t)(offset + cd->within);
-                            }
-                            SCLogDebug("updated content to have depth %u", cd->depth);
-                        } else {
-                            if (cd->depth == 0 && depth != 0) {
-                                if (cd->within > 0) {
-                                    SCLogDebug("within %d distance %d", cd->within, cd->distance);
-                                    if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance >= 0) {
-                                        VALIDATE(offset_plus_pat + cd->distance >= 0 &&
-                                                 offset_plus_pat + cd->distance <= UINT16_MAX);
-                                        cd->offset = (uint16_t)(offset_plus_pat + cd->distance);
-                                        SCLogDebug("updated content to have offset %u", cd->offset);
-                                    }
-
-                                    VALIDATE(depth + cd->within >= 0 &&
-                                             depth + cd->within <= UINT16_MAX);
-                                    depth = cd->depth = (uint16_t)(cd->within + depth);
-                                    SCLogDebug("updated content to have depth %u", cd->depth);
-
-                                    if (cd->flags & DETECT_CONTENT_ENDS_WITH) {
-                                        has_ends_with = true;
-                                        if (ends_with_depth == 0)
-                                            ends_with_depth = depth;
-                                        ends_with_depth = MIN(ends_with_depth, depth);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (cd->offset == 0) {// && offset != 0) {
-                        if (cd->flags & DETECT_CONTENT_DISTANCE && cd->distance >= 0) {
-                            cd->offset = offset_plus_pat;
-                            SCLogDebug("update content to have offset %u", cd->offset);
-                        }
-                    }
-
-                    if ((cd->flags & (DETECT_CONTENT_DEPTH|DETECT_CONTENT_OFFSET|DETECT_CONTENT_WITHIN|DETECT_CONTENT_DISTANCE)) == (DETECT_CONTENT_DISTANCE|DETECT_CONTENT_WITHIN) ||
-                            (cd->flags & (DETECT_CONTENT_DEPTH|DETECT_CONTENT_OFFSET|DETECT_CONTENT_WITHIN|DETECT_CONTENT_DISTANCE)) == (DETECT_CONTENT_DISTANCE)) {
-                        if (cd->distance >= 0) {
-                            // only distance
-                            VALIDATE((uint32_t)offset_plus_pat + cd->distance <= UINT16_MAX);
-                            offset = cd->offset = (uint16_t)(offset_plus_pat + cd->distance);
-                            offset_plus_pat = offset + cd->content_len;
-                            SCLogDebug("offset %u offset_plus_pat %u", offset, offset_plus_pat);
-                        }
-                    }
-                    if (cd->flags & DETECT_CONTENT_OFFSET) {
-                        offset = cd->offset;
-                        offset_plus_pat = offset + cd->content_len;
-                        SCLogDebug("stored offset %u offset_plus_pat %u", offset, offset_plus_pat);
-                    }
-                    if (cd->depth) {
-                        depth = cd->depth;
-                        SCLogDebug("stored depth now %u", depth);
-                        offset_plus_pat = offset + cd->content_len;
-                        if (cd->flags & DETECT_CONTENT_ENDS_WITH) {
-                            has_ends_with = true;
-                            if (ends_with_depth == 0)
-                                ends_with_depth = depth;
-                            ends_with_depth = MIN(ends_with_depth, depth);
-                        }
-                    }
-                    if ((cd->flags & (DETECT_CONTENT_WITHIN|DETECT_CONTENT_DEPTH)) == 0) {
-                        has_active_depth_chain = false;
-                        depth = 0;
-                    }
+                    if (cd->depth == 0)
+                        cd->depth = ends_with_depth;
+                    cd->depth = MIN(ends_with_depth, cd->depth);
+                    if (cd->depth)
+                        cd->flags |= DETECT_CONTENT_DEPTH;
                     break;
-                }
-                case DETECT_PCRE: {
-                    // relative could leave offset_plus_pat set.
-                    const DetectPcreData *pd = (const DetectPcreData *)sm->ctx;
-                    if (pd->flags & DETECT_PCRE_RELATIVE) {
-                        depth = 0;
-                    } else {
-                        SCLogDebug("non-anchored PCRE not supported, reset offset_plus_pat & offset");
-                        offset_plus_pat = offset = depth = 0;
-                    }
-                    has_active_depth_chain = false;
-                    break;
-                }
-                default: {
-                    SCLogDebug("keyword not supported, reset offset_plus_pat & offset");
-                    offset_plus_pat = offset = depth = 0;
-                    has_active_depth_chain = false;
-                    break;
-                }
-            }
-        }
-        /* apply anchored 'ends with' as depth to all patterns */
-        if (has_depth && has_ends_with) {
-            sm = s->init_data->smlists[list];
-            for ( ; sm != NULL; sm = sm->next) {
-                switch (sm->type) {
-                    case DETECT_CONTENT: {
-                        DetectContentData *cd = (DetectContentData *)sm->ctx;
-                        if (cd->depth == 0)
-                            cd->depth = ends_with_depth;
-                        cd->depth = MIN(ends_with_depth, cd->depth);
-                        if (cd->depth)
-                            cd->flags |= DETECT_CONTENT_DEPTH;
-                        break;
-                    }
                 }
             }
         }
     }
 #undef VALIDATE
+}
+
+void DetectContentPropagateLimits(Signature *s)
+{
+    for (uint32_t list = 0; list < s->init_data->smlists_array_size; list++) {
+        SigMatch *sm = s->init_data->smlists[list];
+        PropagateLimits(s, sm);
+    }
 }
 
 static inline bool NeedsAsHex(uint8_t c)
@@ -838,7 +858,7 @@ static int DetectContentDepthTest01(void)
     TEST_RUN("content:\"=\"; offset:4; depth:9; content:\"=&\"; distance:55; within:2;", 60, 70);
 
     // distance value is too high so we bail and not set anything on this content
-    TEST_RUN("content:\"0123456789\"; content:\"abcdef\"; distance:2147483647;", 0, 0);
+    TEST_RUN("content:\"0123456789\"; content:\"abcdef\"; distance:1048576;", 0, 0);
 
     // Bug #5162.
     TEST_RUN("content:\"SMB\"; depth:8; content:\"|09 00|\"; distance:8; within:2;", 11, 18);
@@ -1155,8 +1175,10 @@ static int DetectContentLongPatternMatchTest(uint8_t *raw_eth_pkt, uint16_t pkts
     }
     de_ctx->sig_list->next = NULL;
 
-    if (de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_PMATCH]->type == DETECT_CONTENT) {
-        DetectContentData *co = (DetectContentData *)de_ctx->sig_list->sm_lists_tail[DETECT_SM_LIST_PMATCH]->ctx;
+    if (de_ctx->sig_list->init_data->smlists_tail[DETECT_SM_LIST_PMATCH]->type == DETECT_CONTENT) {
+        DetectContentData *co = (DetectContentData *)de_ctx->sig_list->init_data
+                                        ->smlists_tail[DETECT_SM_LIST_PMATCH]
+                                        ->ctx;
         if (co->flags & DETECT_CONTENT_RELATIVE_NEXT) {
             printf("relative next flag set on final match which is content: ");
             goto end;
@@ -1164,7 +1186,7 @@ static int DetectContentLongPatternMatchTest(uint8_t *raw_eth_pkt, uint16_t pkts
     }
 
     SCLogDebug("---DetectContentLongPatternMatchTest---");
-    DetectContentPrintAll(de_ctx->sig_list->sm_lists[DETECT_SM_LIST_MATCH]);
+    DetectContentPrintAll(de_ctx->sig_list->init_data->smlists[DETECT_SM_LIST_MATCH]);
 
     SigGroupBuild(de_ctx);
     DetectEngineThreadCtxInit(&th_v, (void *)de_ctx, (void *)&det_ctx);
@@ -1431,34 +1453,26 @@ end:
  */
 static int DetectContentParseTest18(void)
 {
-    Signature *s = SigAlloc();
-    int result = 1;
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
-    if (de_ctx == NULL) {
-        result = 0;
-        goto end;
-    }
+    FAIL_IF_NULL(de_ctx);
 
-    if (DetectSignatureSetAppProto(s, ALPROTO_DCERPC) < 0)
-        goto end;
-
-    result &= (DetectContentSetup(de_ctx, s, "one") == 0);
-    result &= (s->sm_lists[g_dce_stub_data_buffer_id] == NULL && s->sm_lists[DETECT_SM_LIST_PMATCH] != NULL);
-
+    Signature *s = SigAlloc();
+    FAIL_IF_NULL(s);
+    FAIL_IF(DetectSignatureSetAppProto(s, ALPROTO_DCERPC) < 0);
+    FAIL_IF_NOT(DetectContentSetup(de_ctx, s, "one") == 0);
+    FAIL_IF(DetectBufferIsPresent(s, g_dce_stub_data_buffer_id));
+    FAIL_IF_NOT(s->init_data->smlists[DETECT_SM_LIST_PMATCH] != NULL);
     SigFree(de_ctx, s);
 
     s = SigAlloc();
-    if (s == NULL)
-        return 0;
-
-    result &= (DetectContentSetup(de_ctx, s, "one") == 0);
-    result &= (s->sm_lists[g_dce_stub_data_buffer_id] == NULL && s->sm_lists[DETECT_SM_LIST_PMATCH] != NULL);
-
- end:
+    FAIL_IF_NULL(s);
+    FAIL_IF_NOT(DetectContentSetup(de_ctx, s, "one") == 0);
+    FAIL_IF(DetectBufferIsPresent(s, g_dce_stub_data_buffer_id));
+    FAIL_IF_NOT(s->init_data->smlists[DETECT_SM_LIST_PMATCH] != NULL);
     SigFree(de_ctx, s);
-    DetectEngineCtxFree(de_ctx);
 
-    return result;
+    DetectEngineCtxFree(de_ctx);
+    PASS;
 }
 
 /**
@@ -1467,288 +1481,75 @@ static int DetectContentParseTest18(void)
 
 static int DetectContentParseTest19(void)
 {
-    DetectEngineCtx *de_ctx = NULL;
-    int result = 1;
-    Signature *s = NULL;
-    DetectContentData *data = NULL;
 
-    de_ctx = DetectEngineCtxInit();
-    if (de_ctx == NULL)
-        goto end;
-
+    DetectEngineCtx *de_ctx = DetectEngineCtxInit();
+    FAIL_IF_NULL(de_ctx);
     de_ctx->flags |= DE_QUIET;
-    de_ctx->sig_list = SigInit(de_ctx, "alert tcp any any -> any any "
-                               "(msg:\"Testing dce iface, stub_data with content\"; "
-                               "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                               "dce_stub_data; "
-                               "content:\"one\"; distance:0; sid:1;)");
-    if (de_ctx->sig_list == NULL) {
-        printf ("failed dce iface, stub_data with content ");
-        result = 0;
-        goto end;
-    }
-    s = de_ctx->sig_list;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        data->flags & DETECT_CONTENT_WITHIN ||
-        !(data->flags & DETECT_CONTENT_DISTANCE) ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
 
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing dce iface, stub_data with contents & distance, within\"; "
-                      "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                      "dce_stub_data; "
-                      "content:\"one\"; distance:0; content:\"two\"; within:10; sid:1;)");
-    if (s->next == NULL) {
-        printf("failed dce iface, stub_data with content & distance, within");
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        !(data->flags & DETECT_CONTENT_WITHIN) ||
-        data->flags & DETECT_CONTENT_DISTANCE ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
-    result &= (data->within == 10);
-/*
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing dce iface, stub_data with contents & offset, depth\"; "
-                      "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                      "dce_stub_data; "
-                      "content:\"one\"; offset:5; depth:9; "
-                      "content:\"two\"; within:10; sid:1;)");
-    if (s->next == NULL) {
-        printf ("failed dce iface, stub_data with contents & offset, depth");
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        data->flags & DETECT_CONTENT_WITHIN ||
-        data->flags & DETECT_CONTENT_DISTANCE ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
-    result &= (data->offset == 5 && data->depth == 9);
-    data = (DetectContentData *)s->sm_lists[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        !(data->flags & DETECT_CONTENT_WITHIN) ||
-        data->flags & DETECT_CONTENT_DISTANCE ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
+    Signature *s =
+            DetectEngineAppendSig(de_ctx, "alert tcp any any -> any any "
+                                          "(msg:\"Testing dce iface, stub_data with content\"; "
+                                          "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
+                                          "dce_stub_data; "
+                                          "content:\"one\"; distance:0; sid:1;)");
+    FAIL_IF_NULL(s);
 
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing dce iface, stub with contents, distance\"; "
-                      "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                      "dce_stub_data; "
-                      "content:\"one\"; distance:0; "
-                      "content:\"two\"; distance:2; sid:1;)");
-    if (s->next == NULL) {
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        data->flags & DETECT_CONTENT_WITHIN ||
-        !(data->flags & DETECT_CONTENT_DISTANCE) ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
-    result &= (data->distance == 2);
-*/
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing dce iface, stub with contents, distance, within\"; "
-                      "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                      "dce_stub_data; "
-                      "content:\"one\"; distance:0; "
-                      "content:\"two\"; within:10; distance:2; sid:1;)");
-    if (s->next == NULL) {
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        !(data->flags & DETECT_CONTENT_WITHIN) ||
-        !(data->flags & DETECT_CONTENT_DISTANCE) ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
-    result &= (data->within == 10 && data->distance == 2);
-/*
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing dce iface, stub_data with content, offset\"; "
-                      "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                      "dce_stub_data; "
-                      "content:\"one\"; offset:10; sid:1;)");
-    if (s->next == NULL) {
-        printf ("Failed dce iface, stub_data with content, offset ");
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        data->flags & DETECT_CONTENT_WITHIN ||
-        data->flags & DETECT_CONTENT_DISTANCE ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
-    result &= (data->offset == 10);
+    SigMatch *sm = DetectBufferGetFirstSigMatch(s, g_dce_stub_data_buffer_id);
+    FAIL_IF_NULL(sm);
+    FAIL_IF_NOT(sm->type == DETECT_CONTENT);
+    FAIL_IF_NOT(s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL);
 
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing dce iface, stub_data with content, depth\"; "
-                      "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                      "dce_stub_data; "
-                      "content:\"one\"; depth:10; sid:1;)");
-    if (s->next == NULL) {
-        printf ("failed dce iface, stub_data with content, depth");
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        data->flags & DETECT_CONTENT_WITHIN ||
-        data->flags & DETECT_CONTENT_DISTANCE ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
-    result &= (data->depth == 10);
+    DetectContentData *data = (DetectContentData *)sm->ctx;
+    FAIL_IF_NOT(data->flags == DETECT_CONTENT_DISTANCE);
 
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing dce iface, stub_data with content, offset, depth\"; "
-                      "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
-                      "dce_stub_data; "
-                      "content:\"one\"; offset:10; depth:3; sid:1;)");
-    if (s->next == NULL) {
-        printf("failed dce iface, stub_data with content, offset, depth");
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] == NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists_tail[g_dce_stub_data_buffer_id]->type == DETECT_CONTENT);
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] == NULL);
-    data = (DetectContentData *)s->sm_lists_tail[g_dce_stub_data_buffer_id]->ctx;
-    if (data->flags & DETECT_CONTENT_RAWBYTES ||
-        data->flags & DETECT_CONTENT_NOCASE ||
-        data->flags & DETECT_CONTENT_WITHIN ||
-        data->flags & DETECT_CONTENT_DISTANCE ||
-        data->flags & DETECT_CONTENT_FAST_PATTERN ||
-        data->flags & DETECT_CONTENT_NEGATED ||
-        result == 0) {
-        result = 0;
-        goto end;
-    }
-    result &= (data->offset == 10 && data->depth == 13);
-*/
-    s->next = SigInit(de_ctx, "alert tcp any any -> any any "
-                      "(msg:\"Testing content\"; "
-                      "content:\"one\"; sid:1;)");
-    if (s->next == NULL) {
-        printf ("failed testing content");
-        result = 0;
-        goto end;
-    }
-    s = s->next;
-    if (s->sm_lists_tail[g_dce_stub_data_buffer_id] != NULL) {
-        result = 0;
-        goto end;
-    }
-    result &= (s->sm_lists[DETECT_SM_LIST_PMATCH] != NULL);
+    s = DetectEngineAppendSig(de_ctx,
+            "alert tcp any any -> any any "
+            "(msg:\"Testing dce iface, stub_data with contents & distance, within\"; "
+            "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
+            "dce_stub_data; "
+            "content:\"one\"; distance:0; content:\"two\"; within:10; sid:2;)");
+    FAIL_IF_NULL(s);
+    sm = DetectBufferGetFirstSigMatch(s, g_dce_stub_data_buffer_id);
+    FAIL_IF_NULL(sm);
+    FAIL_IF_NOT(sm->type == DETECT_CONTENT);
+    FAIL_IF_NULL(sm->next);
+    sm = sm->next;
+    FAIL_IF_NOT(sm->type == DETECT_CONTENT);
+    FAIL_IF_NOT(s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL);
 
- end:
-    SigGroupCleanup(de_ctx);
-    SigCleanSignatures(de_ctx);
+    data = (DetectContentData *)sm->ctx;
+    FAIL_IF_NOT(data->flags == DETECT_CONTENT_WITHIN);
+    FAIL_IF_NOT(data->within == 10);
+
+    s = DetectEngineAppendSig(de_ctx,
+            "alert tcp any any -> any any "
+            "(msg:\"Testing dce iface, stub with contents, distance, within\"; "
+            "dce_iface:3919286a-b10c-11d0-9ba8-00c04fd92ef5; "
+            "dce_stub_data; "
+            "content:\"one\"; distance:0; "
+            "content:\"two\"; within:10; distance:2; sid:3;)");
+    FAIL_IF_NULL(s);
+    sm = DetectBufferGetFirstSigMatch(s, g_dce_stub_data_buffer_id);
+    FAIL_IF_NULL(sm);
+    FAIL_IF_NOT(sm->type == DETECT_CONTENT);
+    FAIL_IF_NULL(sm->next);
+    sm = sm->next;
+    FAIL_IF_NOT(sm->type == DETECT_CONTENT);
+    data = (DetectContentData *)sm->ctx;
+    FAIL_IF_NOT(data->flags == (DETECT_CONTENT_WITHIN | DETECT_CONTENT_DISTANCE));
+    FAIL_IF_NOT(data->within == 10);
+    FAIL_IF_NOT(data->distance == 2);
+    FAIL_IF_NOT(s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL);
+
+    s = DetectEngineAppendSig(de_ctx, "alert tcp any any -> any any "
+                                      "(msg:\"Testing content\"; "
+                                      "content:\"one\"; sid:4;)");
+    FAIL_IF_NULL(s);
+    FAIL_IF(DetectBufferIsPresent(s, g_dce_stub_data_buffer_id));
+    FAIL_IF(s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL);
+
     DetectEngineCtxFree(de_ctx);
-
-    return result;
+    PASS;
 }
 
 /**
@@ -1891,13 +1692,14 @@ static int DetectContentParseTest24(void)
         goto end;
     }
 
-    if (s->sm_lists_tail[DETECT_SM_LIST_PMATCH] == NULL || s->sm_lists_tail[DETECT_SM_LIST_PMATCH]->ctx == NULL) {
+    if (s->init_data->smlists_tail[DETECT_SM_LIST_PMATCH] == NULL ||
+            s->init_data->smlists_tail[DETECT_SM_LIST_PMATCH]->ctx == NULL) {
         printf("de_ctx->pmatch_tail == NULL || de_ctx->pmatch_tail->ctx == NULL: ");
         result = 0;
         goto end;
     }
 
-    cd = (DetectContentData *)s->sm_lists_tail[DETECT_SM_LIST_PMATCH]->ctx;
+    cd = (DetectContentData *)s->init_data->smlists_tail[DETECT_SM_LIST_PMATCH]->ctx;
     result = (strncmp("boo", (char *)cd->content, cd->content_len) == 0);
 
 end:
@@ -2227,126 +2029,6 @@ static int DetectContentParseTest35(void)
     return result;
 }
 
-/**
- * \test Parsing test: file_data
- */
-static int DetectContentParseTest36(void)
-{
-    DetectEngineCtx *de_ctx = NULL;
-    int result = 0;
-
-    de_ctx = DetectEngineCtxInit();
-    if (de_ctx == NULL)
-        goto end;
-
-    de_ctx->flags |= DE_QUIET;
-    de_ctx->sig_list = SigInit(de_ctx,
-                               "alert tcp any any -> any any "
-                               "(msg:\"test\"; file_data; content:\"abc\"; sid:1;)");
-    if (de_ctx->sig_list == NULL) {
-        printf("sig parse failed: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[DETECT_SM_LIST_PMATCH] != NULL) {
-        printf("content still in PMATCH list: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[g_file_data_buffer_id] == NULL) {
-        printf("content not in FILEDATA list: ");
-        goto end;
-    }
-
-    result = 1;
-end:
-    SigGroupCleanup(de_ctx);
-    SigCleanSignatures(de_ctx);
-    DetectEngineCtxFree(de_ctx);
-
-    return result;
-}
-
-/**
- * \test Parsing test: file_data
- */
-static int DetectContentParseTest37(void)
-{
-    DetectEngineCtx *de_ctx = NULL;
-    int result = 0;
-
-    de_ctx = DetectEngineCtxInit();
-    if (de_ctx == NULL)
-        goto end;
-
-    de_ctx->flags |= DE_QUIET;
-    de_ctx->sig_list = SigInit(de_ctx,
-                               "alert tcp any any -> any any "
-                               "(msg:\"test\"; file_data; content:\"abc\"; content:\"def\"; sid:1;)");
-    if (de_ctx->sig_list == NULL) {
-        printf("sig parse failed: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[DETECT_SM_LIST_PMATCH] != NULL) {
-        printf("content still in PMATCH list: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[g_file_data_buffer_id] == NULL) {
-        printf("content not in FILEDATA list: ");
-        goto end;
-    }
-
-    result = 1;
-end:
-    SigGroupCleanup(de_ctx);
-    SigCleanSignatures(de_ctx);
-    DetectEngineCtxFree(de_ctx);
-
-    return result;
-}
-
-/**
- * \test Parsing test: file_data
- */
-static int DetectContentParseTest38(void)
-{
-    DetectEngineCtx *de_ctx = NULL;
-    int result = 0;
-
-    de_ctx = DetectEngineCtxInit();
-    if (de_ctx == NULL)
-        goto end;
-
-    de_ctx->flags |= DE_QUIET;
-    de_ctx->sig_list = SigInit(de_ctx,
-                               "alert tcp any any -> any any "
-                               "(msg:\"test\"; file_data; content:\"abc\"; content:\"def\"; within:8; sid:1;)");
-    if (de_ctx->sig_list == NULL) {
-        printf("sig parse failed: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[DETECT_SM_LIST_PMATCH] != NULL) {
-        printf("content still in PMATCH list: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[g_file_data_buffer_id] == NULL) {
-        printf("content not in FILEDATA list: ");
-        goto end;
-    }
-
-    result = 1;
-end:
-    SigGroupCleanup(de_ctx);
-    SigCleanSignatures(de_ctx);
-    DetectEngineCtxFree(de_ctx);
-
-    return result;
-}
-
 static int SigTestPositiveTestContent(const char *rule, uint8_t *buf)
 {
     uint16_t buflen = strlen((char *)buf);
@@ -2377,86 +2059,6 @@ static int SigTestPositiveTestContent(const char *rule, uint8_t *buf)
 
     UTHFreePackets(&p, 1);
     PASS;
-}
-
-/**
- * \test Parsing test: file_data, within relative to file_data
- */
-static int DetectContentParseTest39(void)
-{
-    DetectEngineCtx *de_ctx = NULL;
-    int result = 0;
-
-    de_ctx = DetectEngineCtxInit();
-    if (de_ctx == NULL)
-        goto end;
-
-    de_ctx->flags |= DE_QUIET;
-    de_ctx->sig_list = SigInit(de_ctx,
-                               "alert tcp any any -> any any "
-                               "(msg:\"test\"; file_data; content:\"abc\"; within:8; sid:1;)");
-    if (de_ctx->sig_list == NULL) {
-        printf("sig parse failed: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[DETECT_SM_LIST_PMATCH] != NULL) {
-        printf("content still in PMATCH list: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[g_file_data_buffer_id] == NULL) {
-        printf("content not in FILEDATA list: ");
-        goto end;
-    }
-
-    result = 1;
-end:
-    SigGroupCleanup(de_ctx);
-    SigCleanSignatures(de_ctx);
-    DetectEngineCtxFree(de_ctx);
-
-    return result;
-}
-
-/**
- * \test Parsing test: file_data, distance relative to file_data
- */
-static int DetectContentParseTest40(void)
-{
-    DetectEngineCtx *de_ctx = NULL;
-    int result = 0;
-
-    de_ctx = DetectEngineCtxInit();
-    if (de_ctx == NULL)
-        goto end;
-
-    de_ctx->flags |= DE_QUIET;
-    de_ctx->sig_list = SigInit(de_ctx,
-                               "alert tcp any any -> any any "
-                               "(msg:\"test\"; file_data; content:\"abc\"; distance:3; sid:1;)");
-    if (de_ctx->sig_list == NULL) {
-        printf("sig parse failed: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[DETECT_SM_LIST_PMATCH] != NULL) {
-        printf("content still in PMATCH list: ");
-        goto end;
-    }
-
-    if (de_ctx->sig_list->sm_lists[g_file_data_buffer_id] == NULL) {
-        printf("content not in FILEDATA list: ");
-        goto end;
-    }
-
-    result = 1;
-end:
-    SigGroupCleanup(de_ctx);
-    SigCleanSignatures(de_ctx);
-    DetectEngineCtxFree(de_ctx);
-
-    return result;
 }
 
 static int DetectContentParseTest41(void)
@@ -3191,11 +2793,6 @@ static void DetectContentRegisterTests(void)
     UtRegisterTest("DetectContentParseTest33", DetectContentParseTest33);
     UtRegisterTest("DetectContentParseTest34", DetectContentParseTest34);
     UtRegisterTest("DetectContentParseTest35", DetectContentParseTest35);
-    UtRegisterTest("DetectContentParseTest36", DetectContentParseTest36);
-    UtRegisterTest("DetectContentParseTest37", DetectContentParseTest37);
-    UtRegisterTest("DetectContentParseTest38", DetectContentParseTest38);
-    UtRegisterTest("DetectContentParseTest39", DetectContentParseTest39);
-    UtRegisterTest("DetectContentParseTest40", DetectContentParseTest40);
     UtRegisterTest("DetectContentParseTest41", DetectContentParseTest41);
     UtRegisterTest("DetectContentParseTest42", DetectContentParseTest42);
     UtRegisterTest("DetectContentParseTest43", DetectContentParseTest43);
