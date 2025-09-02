@@ -136,7 +136,7 @@ jobs:
                 texlive-capt-of \
                 texlive-needspace
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: ./.github/actions/install-cbindgen
       # Download and extract dependency archives created during prep
@@ -282,7 +282,7 @@ jobs:
       - run: rustup component add rustfmt
       - run: rustup component add clippy
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
 
       - uses: ./.github/actions/install-cbindgen
@@ -506,7 +506,7 @@ jobs:
                 which \
                 zlib-devel
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
 
       - uses: ./.github/actions/install-cbindgen
@@ -697,7 +697,7 @@ jobs:
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.83 -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - uses: ./.github/actions/install-cbindgen
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
@@ -786,7 +786,7 @@ jobs:
                 sudo \
                 which \
                 zlib-devel
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - uses: ./.github/actions/install-cbindgen
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
@@ -880,7 +880,7 @@ jobs:
                 sudo \
                 which \
                 zlib-devel
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: ./.github/actions/install-cbindgen
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
@@ -966,7 +966,7 @@ jobs:
                 which \
                 zlib-devel
       - run: adduser suricata
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - uses: ./.github/actions/install-cbindgen
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
@@ -1052,7 +1052,7 @@ jobs:
                 sudo \
                 which \
                 zlib-devel
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1099,7 +1099,7 @@ jobs:
           dnf config-manager --set-enabled crb
 
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - uses: ./.github/actions/install-cbindgen
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
@@ -1107,7 +1107,7 @@ jobs:
       - name: Install minimal dependencies
         run: ./scripts/docs-almalinux9-minimal-build.sh
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1175,7 +1175,7 @@ jobs:
                 software-properties-common \
                 zlib1g \
                 zlib1g-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1252,7 +1252,7 @@ jobs:
       # packaged Rust version is too old for coverage, so get from rustup
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1393,7 +1393,7 @@ jobs:
       # specific version to match up to the llvm version in ubuntu below
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1499,7 +1499,7 @@ jobs:
       # specific version to match up to the llvm version in ubuntu below
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1634,7 +1634,7 @@ jobs:
                 time \
                 wget \
                 dpdk-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1722,7 +1722,7 @@ jobs:
                 time \
                 wget \
                 dpdk-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1825,7 +1825,7 @@ jobs:
       # packaged Rust version is too old for coverage, so get from rustup
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -1916,7 +1916,7 @@ jobs:
                 zlib1g-dev \
                 exuberant-ctags \
                 dpdk-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2066,7 +2066,7 @@ jobs:
                 zlib1g \
                 zlib1g-dev \
                 exuberant-ctags
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2144,7 +2144,7 @@ jobs:
                 zlib1g \
                 zlib1g-dev
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2240,7 +2240,7 @@ jobs:
           make -j ${{ env.CPUS }}
           sudo make install
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2275,7 +2275,7 @@ jobs:
             git \
             libtool
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2376,7 +2376,7 @@ jobs:
           ninja -C build install
           ldconfig
           cd $HOME
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2453,7 +2453,7 @@ jobs:
               texlive-latex-extra \
               zlib1g \
               zlib1g-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2542,7 +2542,7 @@ jobs:
               texlive-latex-extra \
               zlib1g \
               zlib1g-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2624,7 +2624,7 @@ jobs:
               texlive-latex-extra \
               zlib1g \
               zlib1g-dev
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2704,7 +2704,7 @@ jobs:
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain $RUST_VERSION_KNOWN -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2775,7 +2775,7 @@ jobs:
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain $RUST_VERSION_KNOWN -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2825,7 +2825,7 @@ jobs:
           rust \
           xz
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - name: Downloading prep archive
         uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
@@ -2880,7 +2880,7 @@ jobs:
       # preinstalled one to be picked up by configure
       - name: cbindgen
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2936,7 +2936,7 @@ jobs:
       # preinstalled one to be picked up by configure
       - name: cbindgen
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
@@ -2983,7 +2983,7 @@ jobs:
       # preinstalled one to be picked up by configure
       - name: cbindgen
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
       - run: git config --global --add safe.directory /__w/suricata/suricata
       - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806
         with:
